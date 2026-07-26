@@ -5,3 +5,5 @@ artifacts/
 .DS_Store
 .env
 credentials.json
+dist-types/
+*.tgz
