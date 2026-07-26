@@ -4,7 +4,7 @@ AIHub(sub2api)最优分组自动路由反代。本地起一个 HTTP 代理,把 O
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/nightsky1229/aihub-auto/releases/latest) 下载对应平台压缩包并解压
+1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载对应平台压缩包并解压
 2. 运行 `aihub-auto`(Windows 双击 `aihub-auto.exe`)
 3. 打开控制台 <http://127.0.0.1:8787/ui>,登录 AIHub 账号(或直接粘贴 token)
 4. 把你的客户端指向本地代理:

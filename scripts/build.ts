@@ -47,15 +47,23 @@ for (const t of TARGETS) {
   }
   await cp(join(root, "apps/router/README.md"), join(dir, "README.md")).catch(() => {});
   const zipName = `aihub-auto-${name}.zip`;
-  // zip:linux/mac 有 zip 命令;Windows 开发机用 tar(bsdtar 支持 zip)
-  const zipProc = await $`tar -a -c -f ${join(artifacts, zipName)} -C ${dir} .`.quiet().nothrow();
-  if (zipProc.exitCode !== 0) {
-    const alt = await $`zip -j -r ${join(artifacts, zipName)} ${dir}`.quiet().nothrow();
-    if (alt.exitCode !== 0) {
-      console.error(`✗ 打包失败:${zipName}`);
-      failed++;
-      continue;
-    }
+  const zipPath = join(artifacts, zipName);
+  // 压缩:优先 zip(CI/linux/mac);Windows 开发机回退 PowerShell Compress-Archive
+  let zipped = (await $`zip -j -r ${zipPath} ${dir}`.quiet().nothrow()).exitCode === 0;
+  if (!zipped && process.platform === "win32") {
+    const psSrc = `${dir.replaceAll("/", "\\")}\\*`;
+    const psDst = zipPath.replaceAll("/", "\\");
+    zipped =
+      (
+        await $`powershell -NoProfile -Command ${`Compress-Archive -Path '${psSrc}' -DestinationPath '${psDst}' -Force`}`
+          .quiet()
+          .nothrow()
+      ).exitCode === 0;
+  }
+  if (!zipped) {
+    console.error(`✗ 打包失败:${zipName}`);
+    failed++;
+    continue;
   }
   console.log(`✓ ${zipName}`);
 }
