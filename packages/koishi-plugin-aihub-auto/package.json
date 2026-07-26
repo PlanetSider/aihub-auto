@@ -1,9 +1,47 @@
 {
   "name": "koishi-plugin-aihub-auto",
   "version": "0.1.0",
+  "description": "查询 AIHub 当前最优分组推荐,支持指定适配器/群号(通配符),条数自适应",
   "type": "module",
-  "description": "查询 AIHub 当前最优分组推荐 (placeholder, implemented in aihub-koishi plan)",
-  "dependencies": {
-    "@aihub-auto/core": "workspace:*"
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist"],
+  "license": "MIT",
+  "keywords": ["chatbot", "koishi", "plugin", "onebot", "aihub", "ai"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WSXYT/aihub-auto.git",
+    "directory": "packages/koishi-plugin-aihub-auto"
+  },
+  "homepage": "https://github.com/WSXYT/aihub-auto",
+  "koishi": {
+    "description": {
+      "zh": "查询 AIHub 当前最优分组推荐(价格×首字延迟评分,条数自适应 1~6)",
+      "en": "Query current optimal AIHub group recommendations"
+    },
+    "service": {
+      "required": ["http"]
+    }
+  },
+  "scripts": {
+    "build": "bun run build.ts",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "koishi": "^4.17.0"
+  },
+  "devDependencies": {
+    "@aihub-auto/core": "workspace:*",
+    "@koishijs/plugin-http": "^0.6.3",
+    "@koishijs/plugin-mock": "^2.6.6",
+    "koishi": "^4.17.0"
   }
 }
