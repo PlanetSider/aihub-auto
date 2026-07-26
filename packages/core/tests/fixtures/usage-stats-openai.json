@@ -1,0 +1,19 @@
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "items": [
+      { "code": "A003-Plus", "platform": "openai", "rate_multiplier": 0.12, "avg_ttft_ms": 890.6, "sample_count": 20, "last_sample_at": "2026-07-26T14:10:37Z", "group_id": 41 },
+      { "code": "A003-Pro", "platform": "openai", "rate_multiplier": 0.23, "avg_ttft_ms": 926.15, "sample_count": 20, "last_sample_at": "2026-07-26T14:00:10Z", "group_id": 10 },
+      { "code": "A015-Pro", "platform": "openai", "rate_multiplier": 0.15, "avg_ttft_ms": 2323.8, "sample_count": 20, "last_sample_at": "2026-07-26T14:03:16Z", "group_id": 52 },
+      { "code": "A018-Plus/K12", "platform": "openai", "rate_multiplier": 0.07, "avg_ttft_ms": 2789.95, "sample_count": 20, "last_sample_at": "2026-07-26T14:10:43Z", "group_id": 60 },
+      { "code": "A014-Plus", "platform": "openai", "rate_multiplier": 0.08, "avg_ttft_ms": 3137.05, "sample_count": 20, "last_sample_at": "2026-07-26T14:10:43Z", "group_id": 39 },
+      { "code": "A015-K12", "platform": "openai", "rate_multiplier": 0.05, "avg_ttft_ms": 3302.45, "sample_count": 20, "last_sample_at": "2026-07-24T17:28:31Z", "group_id": 49 },
+      { "code": "A013-K12", "platform": "openai", "rate_multiplier": 0.06, "avg_ttft_ms": 3687.1, "sample_count": 20, "last_sample_at": "2026-07-26T14:10:41Z", "group_id": 33 },
+      { "code": "A012-K12", "platform": "openai", "rate_multiplier": 0.06, "avg_ttft_ms": 3743.8, "sample_count": 20, "last_sample_at": "2026-07-26T14:10:43Z", "group_id": 30 },
+      { "code": "A008-Plus/Team", "platform": "openai", "rate_multiplier": 0.02, "avg_ttft_ms": 4734.4, "sample_count": 20, "last_sample_at": "2026-07-26T11:24:23Z", "group_id": 20 }
+    ],
+    "total": 9,
+    "sample_limit": 20
+  }
+}
