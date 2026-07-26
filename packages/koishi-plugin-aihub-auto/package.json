@@ -1,0 +1,9 @@
+{
+  "name": "koishi-plugin-aihub-auto",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "查询 AIHub 当前最优分组推荐 (placeholder, implemented in aihub-koishi plan)",
+  "dependencies": {
+    "@aihub-auto/core": "workspace:*"
+  }
+}
