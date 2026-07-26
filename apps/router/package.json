@@ -5,6 +5,7 @@
   "type": "module",
   "description": "AIHub auto-routing reverse proxy (placeholder, implemented in aihub-app plan)",
   "dependencies": {
-    "@aihub-auto/core": "workspace:*"
+    "@aihub-auto/core": "workspace:*",
+    "zod": "^4.4.3"
   }
 }
