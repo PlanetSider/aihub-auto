@@ -14,7 +14,7 @@ import {
 } from "./config.ts";
 import { RouteDaemon } from "./daemon.ts";
 import { RouteExecutor } from "./executor.ts";
-import { AuditLog, CrashLog, Logger } from "./logger.ts";
+import { AuditLog, CrashLog, Logger, RollingFileLog } from "./logger.ts";
 import type { ProxyDeps } from "./proxy.ts";
 import { createServer } from "./server.ts";
 import { SessionAffinity } from "./session.ts";
@@ -27,7 +27,11 @@ async function main(): Promise<void> {
 	const state = await loadState(store);
 	const credentials = await loadCredentials(store);
 
-	const logger = new Logger(config.logLevel);
+	const appLog = new RollingFileLog(join(dir, "app.log"));
+	const logger = new Logger(config.logLevel, (line) => {
+		console.log(line);
+		appLog.write(line);
+	});
 	const crashLog = new CrashLog(join(dir, "crash.log"));
 	crashLog.record("start", `runtime=${process.version}`);
 	process.on("unhandledRejection", (reason) => {

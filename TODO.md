@@ -14,5 +14,6 @@
 - [x] Guard response stream wrappers against close/error/enqueue after client cancellation.
 - [x] Persist process lifecycle, unhandled rejection, and uncaught exception evidence to `crash.log`.
 - [ ] Add a compiled-Windows stress soak covering repeated `/v1` browsing, SSE client cancellation, concurrent Responses branches, and TTFB failover.
-- [ ] Add optional log rotation/retention for `crash.log` and `audit.jsonl`.
+- [x] Add bounded rotation for `app.log` and `crash.log`; keep `audit.jsonl` opt-in for full decision history.
+- [ ] Add optional rotation/retention controls for `audit.jsonl` when long-term decision auditing is enabled.
 - [ ] Document running the router as a supervised Windows service so unexpected native exits restart automatically.

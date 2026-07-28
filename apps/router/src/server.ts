@@ -292,7 +292,8 @@ export function createServer(deps: ServerDeps): ReturnType<typeof Bun.serve> {
 					{
 						name: "aihub-auto",
 						status: "ok",
-						message: "OpenAI-compatible API proxy. Use a concrete /v1 endpoint.",
+						message:
+							"OpenAI-compatible API proxy. Use a concrete /v1 endpoint.",
 						ui: "/ui",
 					},
 					req.method === "GET" || req.method === "HEAD" ? 200 : 404,

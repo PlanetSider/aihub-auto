@@ -1,4 +1,10 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import {
+	appendFileSync,
+	mkdirSync,
+	renameSync,
+	rmSync,
+	statSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -74,27 +80,60 @@ function errorDetail(value: unknown): string {
 	}
 }
 
-/** 致命/生命周期日志使用同步追加,确保进程退出前证据落盘。 */
-export class CrashLog {
-	constructor(private readonly path: string) {}
+/** 有界同步文件日志:默认 5 MiB,保留 3 个历史文件。 */
+export class RollingFileLog {
+	constructor(
+		private readonly path: string,
+		private readonly maxBytes = 5 * 1024 * 1024,
+		private readonly backups = 3,
+	) {}
 
-	record(event: string, detail?: unknown): void {
+	write(line: string): void {
 		try {
 			mkdirSync(dirname(this.path), { recursive: true });
-			appendFileSync(
-				this.path,
-				`${JSON.stringify({
-					at: new Date().toISOString(),
-					event,
-					pid: process.pid,
-					...(detail === undefined
-						? {}
-						: { detail: redact(errorDetail(detail)) }),
-				})}\n`,
-				"utf8",
-			);
+			const bytes = Buffer.byteLength(line) + 1;
+			const size = statSync(this.path, { throwIfNoEntry: false })?.size ?? 0;
+			if (size > 0 && size + bytes > this.maxBytes) this.rotate();
+			appendFileSync(this.path, `${line}\n`, "utf8");
 		} catch {
-			// 崩溃日志本身不得影响代理可用性。
+			// 文件日志不可反向影响代理可用性。
 		}
+	}
+
+	private rotate(): void {
+		if (this.backups <= 0) {
+			rmSync(this.path, { force: true });
+			return;
+		}
+		rmSync(`${this.path}.${this.backups}`, { force: true });
+		for (let index = this.backups - 1; index >= 1; index--) {
+			const source = `${this.path}.${index}`;
+			if (statSync(source, { throwIfNoEntry: false })) {
+				renameSync(source, `${this.path}.${index + 1}`);
+			}
+		}
+		renameSync(this.path, `${this.path}.1`);
+	}
+}
+
+/** 致命/生命周期日志同步落盘,确保进程退出前保留证据。 */
+export class CrashLog {
+	private readonly file: RollingFileLog;
+
+	constructor(path: string) {
+		this.file = new RollingFileLog(path, 1024 * 1024, 3);
+	}
+
+	record(event: string, detail?: unknown): void {
+		this.file.write(
+			JSON.stringify({
+				at: new Date().toISOString(),
+				event,
+				pid: process.pid,
+				...(detail === undefined
+					? {}
+					: { detail: redact(errorDetail(detail)) }),
+			}),
+		);
 	}
 }

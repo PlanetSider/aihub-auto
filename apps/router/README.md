@@ -62,9 +62,11 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 | `uiPassword` | 无 | 控制台口令;**监听非 127.0.0.1 时必填** |
 | `decision.*` | 见 ALGORITHM.md | 粘性/缓存惩罚/空闲阈值/最短驻留 |
 | `auditLog` | false | JSONL 决策审计(含每轮全部候选得分) |
+| `logLevel` | `info` | `app.log` 最低日志级别:debug / info / warn / error |
 
 ## 安全边界
 
 - 默认仅监听 127.0.0.1,凭据仅存本机(POSIX 下 0600),日志脱敏;`/ctl/status` 只返回 Key 元数据,不返回 `sk`
+- 配置目录内 `app.log` 默认记录运行日志(5 MiB × 当前+3 个历史),`crash.log` 记录生命周期和未处理异常(1 MiB × 当前+3 个历史)
 - 监听 `0.0.0.0` 时强制要求 `proxyToken` + `uiPassword`,否则拒绝启动(防止别人烧你的额度);客户端此时用 `OPENAI_API_KEY=<proxyToken>` 访问
 - 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用
