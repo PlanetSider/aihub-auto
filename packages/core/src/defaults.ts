@@ -1,9 +1,9 @@
 import type { DecisionPolicy, ModeWeights, RoutingMode } from "./types.ts";
 
 export const MODE_WEIGHTS: Record<RoutingMode, ModeWeights> = {
-  economy: { priceWeight: 0.8, latencyWeight: 0.2 },
-  balanced: { priceWeight: 0.5, latencyWeight: 0.5 },
-  speed: { priceWeight: 0.2, latencyWeight: 0.8 },
+	economy: { priceWeight: 0.8, latencyWeight: 0.2 },
+	balanced: { priceWeight: 0.5, latencyWeight: 0.5 },
+	speed: { priceWeight: 0.2, latencyWeight: 0.8 },
 };
 
 export const DEFAULT_PRICE_BAND = { min: 0, max: 0.15 };
@@ -25,26 +25,26 @@ export const DEFAULT_SCORE_WINDOW = 0.15;
 export const DEFAULT_TOPN_MAX = 6;
 
 export const DEFAULT_DECISION_POLICY: DecisionPolicy = {
-  stickiness: 0.1,
-  cachePenaltyMax: 0.25,
-  /** ≈ 上游 prompt cache TTL(OpenAI/Anthropic 均 ~5min) */
-  cacheIdleMs: 5 * 60_000,
-  minDwellMs: 90_000,
+	stickiness: 0.1,
+	cachePenaltyMax: 0.25,
+	/** OpenAI 默认内存缓存通常在 5-10 分钟无活动后清理 */
+	cacheIdleMs: 5 * 60_000,
+	minDwellMs: 90_000,
 };
 
 /** 本地观测 EWMA 系数 */
 export const LOCAL_EWMA_ALPHA = 0.3;
-/** 本地观测结果环形缓冲大小(错误率/CV 窗口) */
-export const LOCAL_WINDOW_SIZE = 10;
+/** 本地观测结果环形缓冲大小(错误率/P90/CV 窗口) */
+export const LOCAL_WINDOW_SIZE = 20;
 /** 本地置信度半衰期 */
 export const LOCAL_CONFIDENCE_HALF_LIFE_MS = 5 * 60_000;
 
 /** 熔断器默认参数 */
 export const BREAKER_DEFAULTS = {
-  consecutiveFailureThreshold: 3,
-  windowMs: 10_000,
-  windowFailureRate: 0.5,
-  windowMinSamples: 4,
-  baseCooldownMs: 30_000,
-  maxCooldownMs: 10 * 60_000,
+	consecutiveFailureThreshold: 3,
+	windowMs: 10_000,
+	windowFailureRate: 0.5,
+	windowMinSamples: 4,
+	baseCooldownMs: 30_000,
+	maxCooldownMs: 10 * 60_000,
 };

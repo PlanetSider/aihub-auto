@@ -1,6 +1,6 @@
 # aihub-auto router
 
-AIHub(sub2api)最优分组自动路由反代。本地起一个 HTTP 代理,把 OpenAI / Anthropic 流量转发到 aihub.top,自动选择当前最优分组,故障时秒级转移,并且**懂缓存**——不会为了蝇头小利频繁切组害你丢 prompt cache。
+AIHub(sub2api)OpenAI 自动路由反代。本地代理按价格、公开统计和本机实时 TTFT/错误率选择分组;新会话动态均衡,已有会话固定回到原组保留 prompt cache,故障时只迁移失败会话。
 
 ## 快速开始
 
@@ -10,13 +10,9 @@ AIHub(sub2api)最优分组自动路由反代。本地起一个 HTTP 代理,把 O
 4. 把你的客户端指向本地代理:
 
 ```bash
-# OpenAI 系(Codex CLI、openai SDK…)
+# OpenAI 系(Codex CLI、OpenAI SDK 等)
 export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"
 export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,这里随便填
-
-# Anthropic 系(Claude Code…)
-export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"
-export ANTHROPIC_API_KEY="anything"
 ```
 
 之后一切照旧——代理在幕后持续选择最优分组。
@@ -29,12 +25,12 @@ export ANTHROPIC_API_KEY="anything"
 | 均衡 balanced(默认) | 0.5 | 0.5 |
 | 速度优先 speed | 0.2 | 0.8 |
 
-价格区间硬约束默认 `0 ~ 0.15x`,黑名单分组永不参与。全部可在控制台热调整。
+价格区间硬约束默认 `0 ~ 0.15x`,黑名单分组永不参与,可在控制台热调整。
 
 ## Key 模式
 
-- **single(默认)**:用你现有的一把 Key,切组 = `PUT /api/v1/keys/{id}`(同 AIHub 网页操作)
-- **pool(推荐)**:每个候选组自动创建 `aihub-auto-g{组id}` 命名的 Key,切换 = 换 Key,毫秒级、各组缓存互不干扰;LRU 自动删除多余 Key(默认保留 4 组),启动时回收孤儿。**绝不触碰你手动创建的 Key**
+- **pool(默认)**:按需为每个使用中的组创建 `aihub-auto-g{组id}` Key。新会话用 P2C + Peak EWMA 在近优候选中分配,已有会话保持组亲和;同组并发创建只发一次请求。LRU 仅删除超过缓存宽限期且无绑定会话/在飞请求的 Key,所以 `poolMaxGroups` 是安全软上限。**绝不触碰手动创建的 Key**
+- **single(兼容)**:使用现有的一把 Key,切组 = `PUT /api/v1/keys/{id}`。上游单 Key 的全局切组语义无法隔离并发会话,仅供账号不能自动创建 Key 时使用。
 
 ## 为什么比 AIHubRouter 好
 
@@ -42,8 +38,8 @@ export ANTHROPIC_API_KEY="anything"
 | --- | --- | --- |
 | 数据 | 只有公开均值 | 公开统计 + 你自己流量的实测 TTFT/错误率融合 |
 | 故障 | 无感知 | 请求内换组重试(未回包前),熔断指数退避 |
-| 缓存 | 固定粘性 | 流量感知切换成本:活跃期抬高门槛,空闲窗口兑现挂起的切换 |
-| 执行 | 仅 PUT 切组 | PUT 切组 或 Key 池毫秒切换 |
+| 缓存 | 固定粘性 | 会话级组亲和;控制面优化不会迁移热会话 |
+| 执行 | 仅 PUT 切组 | 自动 Key 池 + 请求本地 P2C/Peak-EWMA;single 兼容模式 |
 
 算法细节见 [`packages/core/ALGORITHM.md`](../../packages/core/ALGORITHM.md)。
 
@@ -57,8 +53,10 @@ export ANTHROPIC_API_KEY="anything"
 | `listen.host` / `listen.port` | `127.0.0.1` / `8787` | 监听地址,可改 `0.0.0.0` |
 | `mode` | `balanced` | economy / balanced / speed |
 | `priceBand.min/max` | 0 / 0.15 | 倍率硬约束 |
-| `keyMode` | `single` | single / pool |
-| `poolMaxGroups` | 4 | 池保留组数 |
+| `keyMode` | `pool` | pool / single;启动级配置,修改后需重启 |
+| `poolMaxGroups` | 4 | 新会话参与均衡的候选/池目标数;安全条件不满足时允许软超限;修改后需重启 |
+| `sessionTtlMs` | 86400000 | 会话与模型能力记录保留时间 |
+| `sessionMaxEntries` | 10000 | 会话记录上限 |
 | `pollIntervalMs` | 60000 | 路由轮询间隔 |
 | `proxyToken` | 无 | 反代访问口令;**监听非 127.0.0.1 时必填** |
 | `uiPassword` | 无 | 控制台口令;**监听非 127.0.0.1 时必填** |
@@ -67,6 +65,6 @@ export ANTHROPIC_API_KEY="anything"
 
 ## 安全边界
 
-- 默认仅监听 127.0.0.1,凭据仅存本机(POSIX 下 0600),日志脱敏,不回显 token
+- 默认仅监听 127.0.0.1,凭据仅存本机(POSIX 下 0600),日志脱敏;`/ctl/status` 只返回 Key 元数据,不返回 `sk`
 - 监听 `0.0.0.0` 时强制要求 `proxyToken` + `uiPassword`,否则拒绝启动(防止别人烧你的额度);客户端此时用 `OPENAI_API_KEY=<proxyToken>` 访问
 - 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用

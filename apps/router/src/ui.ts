@@ -56,10 +56,6 @@ dialog::backdrop{background:#0008}
         <option value="balanced">均衡</option>
         <option value="speed">速度优先</option>
       </select>
-      <select id="keyMode">
-        <option value="single">单 Key 切组</option>
-        <option value="pool">Key 池(推荐)</option>
-      </select>
       <button id="saveCfg">保存</button>
     </div>
     <div class="row">
@@ -114,7 +110,7 @@ async function refresh(){
     $("#authState").innerHTML=s.needsReauth?'<span class="badge err">token 失效,请重新登录</span>':(s.hasToken?'<span class="badge ok">已登录</span>':'<span class="badge warn">未登录</span>');
     $("#reqCount").textContent=s.traffic.requestsLast5m+(s.traffic.activeStreams?\`(\${s.traffic.activeStreams} 在飞)\`:"");
     $("#staleState").innerHTML=s.stale?'<span class="badge warn">上游统计过期(用缓存)</span>':'<span class="badge ok">新鲜</span>';
-    $("#mode").value=s.config.mode;$("#keyMode").value=s.config.keyMode;
+    $("#mode").value=s.config.mode;
     if(document.activeElement?.id!=="priceMin")$("#priceMin").value=s.config.priceBand.min;
     if(document.activeElement?.id!=="priceMax")$("#priceMax").value=s.config.priceBand.max;
     const tb=$("#candTable tbody");tb.innerHTML="";
@@ -136,7 +132,7 @@ async function refresh(){
 }
 $("#saveCfg").addEventListener("click",async()=>{
   await api("/ctl/config",{method:"POST",body:JSON.stringify({
-    mode:$("#mode").value,keyMode:$("#keyMode").value,
+    mode:$("#mode").value,
     priceBand:{min:Number($("#priceMin").value),max:Number($("#priceMax").value)}
   })});toast("配置已保存,热生效");refresh();
 });

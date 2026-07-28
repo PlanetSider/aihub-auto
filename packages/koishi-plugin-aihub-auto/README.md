@@ -13,7 +13,7 @@ AIHub 当前推荐
 
 - 推荐条数**自适应 1~6 条**:各分组得分接近就多列,断层就只列头部
 - 评分算法与 [aihub-auto](https://github.com/WSXYT/aihub-auto) 自动路由应用同源:置信度加权(样本新鲜度×数量)、保守延迟修正、价格×首字延迟三种策略
-- OpenAI / Claude 平台都有数据时分段展示
+- 仅查询 AIHub 当前提供的 OpenAI 分组
 
 ## 安装
 

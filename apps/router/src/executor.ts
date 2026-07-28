@@ -6,185 +6,287 @@ import type { Logger } from "./logger.ts";
 export const POOL_KEY_PREFIX = "aihub-auto-g";
 
 export interface ActiveKey {
-  sk: string;
-  groupId: number;
+	sk: string;
+	groupId: number;
+	/** 请求开始计入 TrafficTracker 后释放 Key 逐出保护。 */
+	release?: () => void;
+	/** 本次候选在首字节前失败时恢复原会话绑定。 */
+	rollback?: () => void;
+	/** 已提交响应随后断流时,仅清除仍属于本请求版本的绑定。 */
+	invalidate?: () => void;
+	/** 当前请求是否仍拥有会话主绑定。 */
+	isCurrentBinding?: () => boolean;
 }
 
 export interface ExecutorDeps {
-  client: AIHubClient;
-  state: AppState;
-  credentials: Credentials;
-  logger: Logger;
-  keyMode: "single" | "pool";
-  singleKeyId?: number;
-  poolMaxGroups: number;
-  persistState: () => Promise<void>;
-  persistCredentials: () => Promise<void>;
-  /** 401 时由 daemon 注入的续期回调;成功返回 true */
-  reauth: () => Promise<boolean>;
+	client: AIHubClient;
+	state: AppState;
+	credentials: Credentials;
+	logger: Logger;
+	keyMode: "single" | "pool";
+	singleKeyId?: number;
+	poolMaxGroups: number;
+	evictionGraceMs?: number;
+	protectedGroupIds?: () => ReadonlySet<number>;
+	persistState: () => Promise<void>;
+	persistCredentials: () => Promise<void>;
+	/** 401 时由 daemon 注入的续期回调;成功返回 true */
+	reauth: () => Promise<boolean>;
 }
 
-/**
- * 路由执行器:把"目标分组"落到 AIHub 账号上。
- * 模式 single:PUT /keys/{id} {group_id} 切组,反代始终用同一把 sk。
- * 模式 pool:每组一把 aihub-auto-g{gid} 自建 Key,切换=换 sk(毫秒级,缓存互不干扰);
- *   LRU 超限删除,启动对账回收孤儿;绝不触碰非前缀 Key。
- */
+/** AIHub 账号上的 Key 执行层。pool 请求只确保目标组 Key,不改变全局路由。 */
 export class RouteExecutor {
-  constructor(private readonly deps: ExecutorDeps) {}
+	private readonly creating = new Map<number, Promise<ActiveKey>>();
+	private readonly reservations = new Map<number, number>();
+	private poolMutation: Promise<unknown> = Promise.resolve();
 
-  /** 反代当前应注入的 Key */
-  currentKey(): ActiveKey | undefined {
-    const { state, credentials, keyMode } = this.deps;
-    if (state.currentGroupId === undefined) return undefined;
-    if (keyMode === "single") {
-      if (!credentials.singleKeySk) return undefined;
-      return { sk: credentials.singleKeySk, groupId: state.currentGroupId };
-    }
-    const entry = state.pool[String(state.currentGroupId)];
-    if (!entry) return undefined;
-    entry.lastUsedAt = Date.now();
-    return { sk: entry.sk, groupId: state.currentGroupId };
-  }
+	constructor(private readonly deps: ExecutorDeps) {}
 
-  /** 带 401 重试的调用包装 */
-  private async withAuth<T>(fn: () => Promise<T>): Promise<T> {
-    try {
-      return await fn();
-    } catch (err) {
-      if (err instanceof AIHubApiError && err.status === 401) {
-        const ok = await this.deps.reauth();
-        if (ok) return await fn();
-      }
-      throw err;
-    }
-  }
+	/** 控制面当前默认组对应的 Key。请求面应使用 ensureKey(groupId)。 */
+	currentKey(): ActiveKey | undefined {
+		const { state, credentials, keyMode } = this.deps;
+		if (state.currentGroupId === undefined) return undefined;
+		if (keyMode === "single") {
+			if (!credentials.singleKeySk) return undefined;
+			return { sk: credentials.singleKeySk, groupId: state.currentGroupId };
+		}
+		const entry = state.pool[String(state.currentGroupId)];
+		if (!entry) return undefined;
+		entry.lastUsedAt = Date.now();
+		return { sk: entry.sk, groupId: state.currentGroupId };
+	}
 
-  /** 切换到目标组;返回切换后反代应使用的 Key */
-  async switchTo(groupId: number): Promise<ActiveKey> {
-    return this.deps.keyMode === "single"
-      ? this.switchSingle(groupId)
-      : this.switchPool(groupId);
-  }
+	private async withAuth<T>(fn: () => Promise<T>): Promise<T> {
+		try {
+			return await fn();
+		} catch (err) {
+			if (err instanceof AIHubApiError && err.status === 401) {
+				const ok = await this.deps.reauth();
+				if (ok) return await fn();
+			}
+			throw err;
+		}
+	}
 
-  private async switchSingle(groupId: number): Promise<ActiveKey> {
-    const { state, credentials, logger } = this.deps;
-    let keyId = this.deps.singleKeyId;
-    if (keyId === undefined || !credentials.singleKeySk) {
-      const keys = await this.withAuth(() => this.deps.client.listAllKeys());
-      const chosen =
-        (keyId !== undefined ? keys.find((k) => k.id === keyId) : undefined) ??
-        keys.find((k) => k.status !== "inactive");
-      if (!chosen) throw new Error("账号下没有可用 API Key;请先在 AIHub 创建一个 Key");
-      keyId = chosen.id;
-      if (chosen.key) {
-        credentials.singleKeySk = chosen.key;
-        await this.deps.persistCredentials();
-      } else if (!credentials.singleKeySk) {
-        throw new Error(
-          `Key 列表不返回 sk 明文;请在控制台把 Key(id=${keyId})的 sk 粘贴进配置(singleKeySk)`,
-        );
-      }
-    }
-    try {
-      await this.withAuth(() => this.deps.client.updateKeyGroup(keyId!, groupId));
-    } catch (err) {
-      // PUT 失败重试一次
-      logger.warn(`切组 PUT 失败,重试一次: ${err instanceof Error ? err.message : String(err)}`);
-      await this.withAuth(() => this.deps.client.updateKeyGroup(keyId!, groupId));
-    }
-    state.currentGroupId = groupId;
-    await this.deps.persistState();
-    logger.info(`已切换(single):key=${keyId} → group=${groupId}`);
-    return { sk: credentials.singleKeySk!, groupId };
-  }
+	private serializePool<T>(fn: () => Promise<T>): Promise<T> {
+		const run = this.poolMutation.then(fn, fn);
+		this.poolMutation = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
 
-  private async switchPool(groupId: number): Promise<ActiveKey> {
-    const { state, logger } = this.deps;
-    const gid = String(groupId);
-    let entry = state.pool[gid];
-    if (!entry) {
-      const created = await this.withAuth(() =>
-        this.deps.client.createKey({ name: `${POOL_KEY_PREFIX}${groupId}`, groupId }),
-      );
-      if (!created.key) {
-        throw new Error("创建 Key 未返回 sk 明文,无法用于池模式");
-      }
-      entry = { keyId: created.id, sk: created.key, lastUsedAt: Date.now() };
-      state.pool[gid] = entry;
-      logger.info(`池新建 Key:group=${groupId} keyId=${created.id}`);
-      await this.evictLru(groupId);
-    }
-    entry.lastUsedAt = Date.now();
-    state.currentGroupId = groupId;
-    await this.deps.persistState();
-    return { sk: entry.sk, groupId };
-  }
+	/** 请求面取得指定组 Key。single 模式因上游限制仍会全局切组。 */
+	async ensureKey(groupId: number): Promise<ActiveKey> {
+		if (this.deps.keyMode === "single") {
+			const current = this.currentKey();
+			return current?.groupId === groupId
+				? current
+				: this.switchSingle(groupId);
+		}
 
-  /** LRU 逐出:超过 poolMaxGroups 时删除最久未用且非当前组的自建 Key */
-  private async evictLru(protectGroupId: number): Promise<void> {
-    const { state, logger } = this.deps;
-    const entries = Object.entries(state.pool);
-    if (entries.length <= this.deps.poolMaxGroups) return;
-    const victims = entries
-      .filter(([gid]) => Number(gid) !== protectGroupId && Number(gid) !== state.currentGroupId)
-      .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
-    while (Object.keys(state.pool).length > this.deps.poolMaxGroups && victims.length > 0) {
-      const [gid, entry] = victims.shift()!;
-      try {
-        await this.withAuth(() => this.deps.client.deleteKey(entry.keyId));
-        delete state.pool[gid];
-        logger.info(`池 LRU 删除:group=${gid} keyId=${entry.keyId}`);
-      } catch (err) {
-        logger.warn(`池删除失败(保留记录,下轮重试):keyId=${entry.keyId} ${err instanceof Error ? err.message : ""}`);
-        break;
-      }
-    }
-    await this.deps.persistState();
-  }
+		const existing = this.creating.get(groupId);
+		if (existing) return existing;
 
-  /**
-   * 启动对账:远端 aihub-auto-g* 但 state 不认识 → 孤儿,删除。
-   * 非前缀 Key 一律不触碰。state 记录但远端已消失 → 清理本地记录。
-   */
-  async reconcile(): Promise<void> {
-    const { state, logger } = this.deps;
-    if (this.deps.keyMode !== "pool") return;
-    const keys = await this.withAuth(() => this.deps.client.listAllKeys());
-    const known = new Set(Object.values(state.pool).map((e) => e.keyId));
-    const remoteIds = new Set(keys.map((k) => k.id));
+		// 逐出期间不得读取即将删除的缓存 Key;acquireKey 的 reservation 已经
+		// 先可见,逐出会在远端删除前重新检查它。
+		await this.poolMutation.catch(() => undefined);
+		const cached = this.deps.state.pool[String(groupId)];
+		if (cached) {
+			cached.lastUsedAt = Date.now();
+			return { sk: cached.sk, groupId };
+		}
+		const afterWaitCreating = this.creating.get(groupId);
+		if (afterWaitCreating) return afterWaitCreating;
 
-    for (const key of keys) {
-      if (!key.name.startsWith(POOL_KEY_PREFIX)) continue;
-      if (!known.has(key.id)) {
-        try {
-          await this.withAuth(() => this.deps.client.deleteKey(key.id));
-          logger.info(`回收孤儿 Key:${key.name}(id=${key.id})`);
-        } catch (err) {
-          logger.warn(`孤儿 Key 回收失败:id=${key.id} ${err instanceof Error ? err.message : ""}`);
-        }
-      }
-    }
-    for (const [gid, entry] of Object.entries(state.pool)) {
-      if (!remoteIds.has(entry.keyId)) {
-        delete state.pool[gid];
-        logger.warn(`池记录失效(远端已删):group=${gid}`);
-      }
-    }
-    await this.deps.persistState();
-  }
+		const pending = this.serializePool(async () => {
+			const afterWait = this.deps.state.pool[String(groupId)];
+			if (afterWait) {
+				afterWait.lastUsedAt = Date.now();
+				return { sk: afterWait.sk, groupId };
+			}
 
-  /** 退出清理(可选):删除全部自建 Key */
-  async cleanup(): Promise<void> {
-    const { state, logger } = this.deps;
-    for (const [gid, entry] of Object.entries(state.pool)) {
-      try {
-        await this.withAuth(() => this.deps.client.deleteKey(entry.keyId));
-        delete state.pool[gid];
-      } catch (err) {
-        logger.warn(`退出清理失败:keyId=${entry.keyId} ${err instanceof Error ? err.message : ""}`);
-      }
-    }
-    await this.deps.persistState();
-  }
+			const created = await this.withAuth(() =>
+				this.deps.client.createKey({
+					name: `${POOL_KEY_PREFIX}${groupId}`,
+					groupId,
+				}),
+			);
+			if (!created.key)
+				throw new Error("创建 Key 未返回 sk 明文,无法用于池模式");
+
+			this.deps.state.pool[String(groupId)] = {
+				keyId: created.id,
+				sk: created.key,
+				lastUsedAt: Date.now(),
+			};
+			this.deps.logger.info(`池新建 Key:group=${groupId} keyId=${created.id}`);
+			await this.evictLru(groupId);
+			await this.deps.persistState();
+			return { sk: created.key, groupId };
+		});
+		this.creating.set(groupId, pending);
+		const clear = () => {
+			if (this.creating.get(groupId) === pending) this.creating.delete(groupId);
+		};
+		void pending.then(clear, clear);
+		return pending;
+	}
+
+	/** 请求面租约:TrafficTracker 接管保护前,Lru 不得删除这把 Key。 */
+	async acquireKey(groupId: number): Promise<ActiveKey> {
+		this.reservations.set(groupId, (this.reservations.get(groupId) ?? 0) + 1);
+		let released = false;
+		const release = () => {
+			if (released) return;
+			released = true;
+			const next = (this.reservations.get(groupId) ?? 1) - 1;
+			if (next > 0) this.reservations.set(groupId, next);
+			else this.reservations.delete(groupId);
+		};
+		try {
+			return { ...(await this.ensureKey(groupId)), release };
+		} catch (err) {
+			release();
+			throw err;
+		}
+	}
+
+	/** 控制面切换默认组。pool 中只更新默认值,不会改动其他会话绑定。 */
+	async switchTo(groupId: number): Promise<ActiveKey> {
+		if (this.deps.keyMode === "single") return this.switchSingle(groupId);
+		const key = await this.ensureKey(groupId);
+		this.deps.state.currentGroupId = groupId;
+		await this.deps.persistState();
+		return key;
+	}
+
+	private async switchSingle(groupId: number): Promise<ActiveKey> {
+		const { state, credentials, logger } = this.deps;
+		let keyId = this.deps.singleKeyId;
+		if (keyId === undefined || !credentials.singleKeySk) {
+			const keys = await this.withAuth(() => this.deps.client.listAllKeys());
+			const chosen =
+				(keyId !== undefined
+					? keys.find((key) => key.id === keyId)
+					: undefined) ?? keys.find((key) => key.status !== "inactive");
+			if (!chosen)
+				throw new Error("账号下没有可用 API Key;请先在 AIHub 创建一个 Key");
+			keyId = chosen.id;
+			if (chosen.key) {
+				credentials.singleKeySk = chosen.key;
+				await this.deps.persistCredentials();
+			} else if (!credentials.singleKeySk) {
+				throw new Error(
+					`Key 列表不返回 sk 明文;请在控制台把 Key(id=${keyId})的 sk 粘贴进配置(singleKeySk)`,
+				);
+			}
+		}
+		try {
+			await this.withAuth(() =>
+				this.deps.client.updateKeyGroup(keyId!, groupId),
+			);
+		} catch (err) {
+			logger.warn(
+				`切组 PUT 失败,重试一次: ${err instanceof Error ? err.message : String(err)}`,
+			);
+			await this.withAuth(() =>
+				this.deps.client.updateKeyGroup(keyId!, groupId),
+			);
+		}
+		state.currentGroupId = groupId;
+		await this.deps.persistState();
+		logger.info(`已切换(single):key=${keyId} -> group=${groupId}`);
+		return { sk: credentials.singleKeySk!, groupId };
+	}
+
+	/** 超限时只删除已过宽限期、无会话绑定且无在飞请求的最旧 Key。 */
+	private async evictLru(protectGroupId: number): Promise<void> {
+		const { state, logger } = this.deps;
+		if (Object.keys(state.pool).length <= this.deps.poolMaxGroups) return;
+		const isProtected = (groupId: number): boolean =>
+			groupId === protectGroupId ||
+			groupId === state.currentGroupId ||
+			this.reservations.has(groupId) ||
+			(this.deps.protectedGroupIds?.().has(groupId) ?? false);
+		const grace = this.deps.evictionGraceMs ?? 0;
+		const now = Date.now();
+		const victims = Object.entries(state.pool)
+			.filter(
+				([groupId, entry]) =>
+					!isProtected(Number(groupId)) && now - entry.lastUsedAt >= grace,
+			)
+			.sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt);
+
+		while (
+			Object.keys(state.pool).length > this.deps.poolMaxGroups &&
+			victims.length > 0
+		) {
+			const [groupId, entry] = victims.shift()!;
+			// 快照之后可能有新请求取得 reservation;删除前必须重新确认。
+			if (isProtected(Number(groupId))) continue;
+			try {
+				await this.withAuth(() => this.deps.client.deleteKey(entry.keyId));
+				delete state.pool[groupId];
+				logger.info(`池 LRU 删除:group=${groupId} keyId=${entry.keyId}`);
+			} catch (err) {
+				logger.warn(
+					`池删除失败(保留记录,下轮重试):keyId=${entry.keyId} ${err instanceof Error ? err.message : ""}`,
+				);
+				break;
+			}
+		}
+	}
+
+	/** 启动对账:回收远端孤儿前缀 Key,绝不触碰用户 Key。 */
+	async reconcile(): Promise<void> {
+		if (this.deps.keyMode !== "pool") return;
+		await this.serializePool(async () => {
+			const { state, logger } = this.deps;
+			const keys = await this.withAuth(() => this.deps.client.listAllKeys());
+			const known = new Set(
+				Object.values(state.pool).map((entry) => entry.keyId),
+			);
+			const remoteIds = new Set(keys.map((key) => key.id));
+
+			for (const key of keys) {
+				if (!key.name.startsWith(POOL_KEY_PREFIX) || known.has(key.id))
+					continue;
+				try {
+					await this.withAuth(() => this.deps.client.deleteKey(key.id));
+					logger.info(`回收孤儿 Key:${key.name}(id=${key.id})`);
+				} catch (err) {
+					logger.warn(
+						`孤儿 Key 回收失败:id=${key.id} ${err instanceof Error ? err.message : ""}`,
+					);
+				}
+			}
+			for (const [groupId, entry] of Object.entries(state.pool)) {
+				if (!remoteIds.has(entry.keyId)) {
+					delete state.pool[groupId];
+					logger.warn(`池记录失效(远端已删):group=${groupId}`);
+				}
+			}
+			await this.deps.persistState();
+		});
+	}
+
+	/** 退出清理(可选):删除全部自建 Key。 */
+	async cleanup(): Promise<void> {
+		await this.serializePool(async () => {
+			const { state, logger } = this.deps;
+			for (const [groupId, entry] of Object.entries(state.pool)) {
+				try {
+					await this.withAuth(() => this.deps.client.deleteKey(entry.keyId));
+					delete state.pool[groupId];
+				} catch (err) {
+					logger.warn(
+						`退出清理失败:keyId=${entry.keyId} ${err instanceof Error ? err.message : ""}`,
+					);
+				}
+			}
+			await this.deps.persistState();
+		});
+	}
 }

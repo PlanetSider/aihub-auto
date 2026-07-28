@@ -10,28 +10,28 @@ const dist = join(root, "dist");
 await rm(dist, { recursive: true, force: true });
 
 for (const [format, outfile] of [
-  ["cjs", "index.cjs"],
-  ["esm", "index.mjs"],
+	["cjs", "index.cjs"],
+	["esm", "index.mjs"],
 ] as const) {
-  const result = await Bun.build({
-    entrypoints: [join(root, "src/index.ts")],
-    outdir: dist,
-    naming: outfile,
-    format,
-    target: "node",
-    external: ["koishi"],
-    minify: false,
-  });
-  if (!result.success) {
-    console.error(result.logs);
-    process.exit(1);
-  }
+	const result = await Bun.build({
+		entrypoints: [join(root, "src/index.ts")],
+		outdir: dist,
+		naming: outfile,
+		format,
+		target: "node",
+		external: ["koishi"],
+		minify: false,
+	});
+	if (!result.success) {
+		console.error(result.logs);
+		process.exit(1);
+	}
 }
 
 // d.ts:手写稳定声明(插件对外 API 就三个导出,避免把 workspace 类型树卷进发包)
 await Bun.write(
-  join(dist, "index.d.ts"),
-  `import type { Context, Schema } from "koishi";
+	join(dist, "index.d.ts"),
+	`import type { Context, Schema } from "koishi";
 
 export declare const name = "aihub-auto";
 
