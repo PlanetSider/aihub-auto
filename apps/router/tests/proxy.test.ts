@@ -94,6 +94,33 @@ describe("反代基础", () => {
 		expect(text).toContain("[DONE]");
 	});
 
+	test("客户端取消时吞掉上游 reader.cancel 错误并归还流量", async () => {
+		h = await setupRouted();
+		let canceled = false;
+		h.proxyDeps.fetch = Object.assign(
+			async () =>
+				new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							controller.enqueue(new TextEncoder().encode("data: started\n\n"));
+						},
+						cancel() {
+							canceled = true;
+							return Promise.reject(new Error("upstream already closed"));
+						},
+					}),
+					{ status: 200 },
+				),
+			{ preconnect() {} },
+		);
+		const response = await handleProxy(proxyReq(), h.proxyDeps);
+		const reader = response.body!.getReader();
+		expect((await reader.read()).done).toBe(false);
+		await reader.cancel("client gone");
+		expect(canceled).toBe(true);
+		expect(h.traffic.snapshot().activeStreams).toBe(0);
+	});
+
 	test("真实 cached_tokens 更新会话缓存证据", async () => {
 		h = await setupRouted();
 		h.mock.behavior.groups.set(1, { cachedTokens: 80, inputTokens: 100 });

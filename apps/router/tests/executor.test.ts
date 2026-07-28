@@ -111,6 +111,21 @@ describe("executor 模式 pool", () => {
 		expect(Object.keys(h.state.pool).sort()).toEqual(["1", "2"]);
 	});
 
+	test("会话过期后定期回收旧 Key,无需等待创建下一把", async () => {
+		h = poolHarness(1);
+		await h.executor.ensureKey(1);
+		h.affinity.bind("session", 1);
+		await h.executor.ensureKey(2);
+		h.state.pool["1"]!.lastUsedAt = 0;
+		h.affinity.prune(Date.now() + h.config.sessionTtlMs + 1);
+
+		expect(await h.executor.trimPool()).toBe(1);
+		expect(Object.keys(h.state.pool)).toEqual(["2"]);
+		expect([...h.mock.keys.values()].map((key) => key.name)).toEqual([
+			"aihub-auto-g2",
+		]);
+	});
+
 	test("对账:回收孤儿前缀 Key,绝不动非前缀 Key,清理失效记录", async () => {
 		h = poolHarness();
 		// 远端孤儿(前缀但 state 不认识)

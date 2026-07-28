@@ -48,3 +48,8 @@ export const DEFAULT_TEMPLATE = `AIHub 当前推荐
 策略:{strategy}
 {items}
 下载:{download}`;
+
+export const DEFAULT_WORST_TEMPLATE = `AIHub 当前最烂分组
+策略:{strategy}
+{items}
+下载:{download}`;

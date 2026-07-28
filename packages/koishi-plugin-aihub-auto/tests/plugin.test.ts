@@ -135,6 +135,24 @@ describe("触发与作用域", () => {
 		await client.shouldReply("/最优分组", /AIHub 当前推荐/);
 	});
 
+	test("『最烂分组』只发最高倍率层中最慢的 1 个,斜杠形式同样触发", async () => {
+		f = await createApp({ mode: "economy" });
+		f.upstream.stats = [
+			stat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 20_000 }),
+			stat({ groupId: 2, rateMultiplier: 0.1, avgTtftMs: 8_000 }),
+			stat({ groupId: 3, rateMultiplier: 0.1, avgTtftMs: 9_000 }),
+		];
+		const client = f.app.mock.client("user1", "100");
+		const text = (await client.receive("最烂分组")).join("\n");
+		expect(text).toContain("AIHub 当前最烂分组");
+		expect(text).toContain("策略:最高倍率优先,同倍率首字最慢");
+		expect(text).toContain("1. A003-Plus(#3)|0.1x|9000 ms");
+		expect(text).not.toContain("A001-Plus(#1)");
+		expect(text).not.toContain("A002-Plus(#2)");
+		expect(text).not.toContain("2. ");
+		await client.shouldReply("/最烂分组", /AIHub 当前最烂分组/);
+	});
+
 	test("非目标群静默", async () => {
 		f = await createApp();
 		f.upstream.stats = [stat({ groupId: 1 })];
@@ -170,21 +188,22 @@ describe("触发与作用域", () => {
 });
 
 describe("冷却与缓存", () => {
-	test("冷却期内第二次触发静默", async () => {
+	test("冷却期内同类查询静默,最优与最烂互不阻塞", async () => {
 		f = await createApp({ cooldownMs: 60_000 });
 		f.upstream.stats = [stat({ groupId: 1 })];
 		const client = f.app.mock.client("user1", "100");
 		await client.shouldReply("最优分组", /AIHub 当前推荐/);
 		await client.shouldNotReply("最优分组");
+		await client.shouldReply("最烂分组", /AIHub 当前最烂分组/);
 	});
 
-	test("缓存 TTL 内两次触发仅一次上游请求", async () => {
+	test("缓存 TTL 内最优/最烂共享一次上游请求", async () => {
 		f = await createApp({ cooldownMs: 0, cacheTtlMs: 60_000 });
 		f.upstream.stats = [stat({ groupId: 1 })];
 		const client = f.app.mock.client("user1", "100");
 		await client.shouldReply("最优分组", /AIHub/);
 		const hitsAfterFirst = f.upstream.hits;
-		await client.shouldReply("最优分组", /AIHub/);
+		await client.shouldReply("最烂分组", /AIHub 当前最烂分组/);
 		expect(f.upstream.hits).toBe(hitsAfterFirst);
 	});
 });

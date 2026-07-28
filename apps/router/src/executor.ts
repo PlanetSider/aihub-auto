@@ -201,17 +201,28 @@ export class RouteExecutor {
 		return { sk: credentials.singleKeySk!, groupId };
 	}
 
+	/** 定期收缩超限池;删除成功后立即持久化,重启仍复用其余 Key。 */
+	async trimPool(): Promise<number> {
+		if (this.deps.keyMode !== "pool") return 0;
+		return this.serializePool(async () => {
+			const removed = await this.evictLru();
+			if (removed > 0) await this.deps.persistState();
+			return removed;
+		});
+	}
+
 	/** 超限时只删除已过宽限期、无会话绑定且无在飞请求的最旧 Key。 */
-	private async evictLru(protectGroupId: number): Promise<void> {
+	private async evictLru(protectGroupId?: number): Promise<number> {
 		const { state, logger } = this.deps;
-		if (Object.keys(state.pool).length <= this.deps.poolMaxGroups) return;
+		if (Object.keys(state.pool).length <= this.deps.poolMaxGroups) return 0;
 		const isProtected = (groupId: number): boolean =>
-			groupId === protectGroupId ||
+			(protectGroupId !== undefined && groupId === protectGroupId) ||
 			groupId === state.currentGroupId ||
 			this.reservations.has(groupId) ||
 			(this.deps.protectedGroupIds?.().has(groupId) ?? false);
 		const grace = this.deps.evictionGraceMs ?? 0;
 		const now = Date.now();
+		let removed = 0;
 		const victims = Object.entries(state.pool)
 			.filter(
 				([groupId, entry]) =>
@@ -229,6 +240,7 @@ export class RouteExecutor {
 			try {
 				await this.withAuth(() => this.deps.client.deleteKey(entry.keyId));
 				delete state.pool[groupId];
+				removed++;
 				logger.info(`池 LRU 删除:group=${groupId} keyId=${entry.keyId}`);
 			} catch (err) {
 				logger.warn(
@@ -237,6 +249,7 @@ export class RouteExecutor {
 				break;
 			}
 		}
+		return removed;
 	}
 
 	/** 启动对账:回收远端孤儿前缀 Key,绝不触碰用户 Key。 */
@@ -268,6 +281,7 @@ export class RouteExecutor {
 					logger.warn(`池记录失效(远端已删):group=${groupId}`);
 				}
 			}
+			await this.evictLru();
 			await this.deps.persistState();
 		});
 	}

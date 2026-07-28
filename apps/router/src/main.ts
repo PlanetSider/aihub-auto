@@ -14,7 +14,7 @@ import {
 } from "./config.ts";
 import { RouteDaemon } from "./daemon.ts";
 import { RouteExecutor } from "./executor.ts";
-import { AuditLog, Logger } from "./logger.ts";
+import { AuditLog, CrashLog, Logger } from "./logger.ts";
 import type { ProxyDeps } from "./proxy.ts";
 import { createServer } from "./server.ts";
 import { SessionAffinity } from "./session.ts";
@@ -28,6 +28,19 @@ async function main(): Promise<void> {
 	const credentials = await loadCredentials(store);
 
 	const logger = new Logger(config.logLevel);
+	const crashLog = new CrashLog(join(dir, "crash.log"));
+	crashLog.record("start", `runtime=${process.version}`);
+	process.on("unhandledRejection", (reason) => {
+		crashLog.record("unhandled_rejection", reason);
+		logger.error(
+			`未处理 Promise:${reason instanceof Error ? reason.message : String(reason)}`,
+		);
+	});
+	process.on("uncaughtException", (err) => {
+		crashLog.record("uncaught_exception", err);
+		logger.error(`未捕获异常:${err.message}`);
+	});
+	process.on("exit", (code) => crashLog.record("exit", `code=${code}`));
 	const audit = new AuditLog(
 		config.auditLog ? join(dir, "audit.jsonl") : undefined,
 	);
@@ -52,7 +65,9 @@ async function main(): Promise<void> {
 		if (persistTimer) return;
 		persistTimer = setTimeout(() => {
 			persistTimer = undefined;
-			void persistState().catch((err) => logger.warn(`状态保存失败:${err.message}`));
+			void persistState().catch((err) =>
+				logger.warn(`状态保存失败:${err.message}`),
+			);
 		}, 250);
 	};
 	const affinity = new SessionAffinity(
@@ -194,6 +209,7 @@ async function main(): Promise<void> {
 		if (shuttingDown) return;
 		shuttingDown = true;
 		logger.info(`收到 ${signal},优雅退出…`);
+		crashLog.record("signal", signal);
 		if (persistTimer) clearTimeout(persistTimer);
 		daemon.stop();
 		server.stop(true);
@@ -210,6 +226,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+	new CrashLog(join(configDir(), "crash.log")).record("startup_error", err);
 	console.error(`启动失败:${err instanceof Error ? err.message : String(err)}`);
 	process.exit(1);
 });

@@ -114,7 +114,9 @@ export type ExcludeReason =
 	| "no_samples"
 	| "invalid_latency"
 	| "low_confidence"
-	| "local_error_rate";
+	| "local_error_rate"
+	/** economy 仅从最低有效倍率层路由;该层不可用时才自动升档。 */
+	| "economy_price_tier";
 
 export interface ScoredCandidate {
 	stat: GroupStat;
@@ -144,6 +146,8 @@ export interface ScoredCandidate {
 
 export interface ExcludedCandidate {
 	stat: GroupStat;
+	/** 已知时使用账号专属倍率,避免控制台回退为公开倍率。 */
+	effectiveRate?: number;
 	excluded: true;
 	excludeReason: ExcludeReason;
 }

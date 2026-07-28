@@ -74,6 +74,10 @@ conservativeLatency = blendedTtft * (2 - confidence) / max(1 - effectiveError, 0
 
 ## 5. 价格与速度得分
 
+先从通过硬过滤的候选中计算 `minimumRate`。`economy` 将价格作为硬优先级:只保留 `effectiveRate === minimumRate` 的最低价层,高价候选标记为 `economy_price_tier`;最低层因本次失败、熔断、模型不兼容或其他硬条件全部被排除后,才以剩余候选的新最低倍率自动升档。最低价层内部仍按保守延迟和在飞负载选择。
+
+`balanced`、`speed` 以及 `economy` 的同价层使用:
+
 ```text
 minimumRate = min(candidate.effectiveRate)
 premium = (effectiveRate - minimumRate) / minimumRate
@@ -81,13 +85,13 @@ speedup = baselineConservative / candidateConservative - 1
 score   = latencyWeight * speedup - priceWeight * premium
 ```
 
-`minimumRate=0` 时仅零倍率候选按延迟竞争,非零倍率得分为负无穷。
+`minimumRate=0` 时仅零倍率候选按延迟竞争,非零倍率不参与。
 
-| 模式 | 价格权重 | 延迟权重 |
-| --- | ---: | ---: |
-| `economy` | 0.8 | 0.2 |
-| `balanced` | 0.5 | 0.5 |
-| `speed` | 0.2 | 0.8 |
+| 模式 | 价格策略 | 延迟权重 |
+| --- | --- | ---: |
+| `economy` | 最低有效倍率硬约束 | 0.2(同价层) |
+| `balanced` | 0.5 权重 | 0.5 |
+| `speed` | 0.2 权重 | 0.8 |
 
 排序顺序为 score 降序、生效倍率升序、保守延迟升序、groupId 升序。
 
@@ -112,7 +116,7 @@ threshold = stickiness + cachePenaltyMax * trafficRecency
 4. `prompt_cache_key`
 5. 模型、instructions、tools 与稳定提示前缀
 
-已有绑定只检查硬约束、模型能力和熔断状态,不会因新评分变化而迁移。`previous_response_id` 会解析为 `sessionKey + preferredGroupId`(响应别名记录的实际上游组);该分支优先回到原组,但**不改写**会话主绑定,避免并发分支互相覆盖。新会话从 `score >= best - 0.15` 的近优候选中取最多 `poolMaxGroups` 个,用会话摘要稳定抽取两个不同候选(Power of Two Choices),再比较带在飞负载(含 route 期 reservation)的原策略得分:
+已有绑定只检查平台、账号可用性、倍率区间、黑名单、样本健康、模型能力和熔断等硬约束,不会因新评分或 `economy` 最低价层变化而迁移。`previous_response_id` 会解析为 `sessionKey + preferredGroupId`(响应别名记录的实际上游组);该分支优先回到原组,但**不改写**会话主绑定,避免并发分支互相覆盖。新会话从 `score >= best - 0.15` 的近优候选中取最多 `poolMaxGroups` 个,用会话摘要稳定抽取两个不同候选(Power of Two Choices),再比较带在飞负载(含 route 期 reservation)的原策略得分:
 
 ```text
 loadedLatency = conservativeLatency * (activeByGroup + 1)
@@ -120,7 +124,7 @@ loadedSpeedup = baselineConservative / loadedLatency - 1
 loadedScore = latencyWeight * loadedSpeedup - priceWeight * premium
 ```
 
-选择 `loadedScore` 较高者。这保留 economy/balanced/speed 的价格策略,同时采用 Finagle/Envoy Peak-EWMA 的核心负载形式 `latency * (pending + 1)`。会话绑定后不再参与动态重平衡。
+选择 `loadedScore` 较高者。`economy` 的 P2C 候选已被限制在当前最低价层,因此负载只会影响同价组;`balanced`/`speed` 仍按各自权重比较。三种模式都采用 Finagle/Envoy Peak-EWMA 的核心负载形式 `latency * (pending + 1)`。会话绑定后不再参与动态重平衡。
 
 ## 8. 故障、熔断与模型能力
 
@@ -148,7 +152,7 @@ pool 是默认模式。`ensureKey(groupId)` 使用同组 single-flight,不同组
 - 没有在飞请求
 - 距最后使用超过缓存宽限期(`decision.cacheIdleMs`)
 
-若没有安全删除对象,池允许暂时超过上限。只管理 `aihub-auto-g{groupId}` 前缀 Key,不触碰用户 Key。`/ctl/status` 只返回 `keyId/lastUsedAt`,不返回 `sk`。
+LRU 在创建新 Key、启动对账和每轮守护时执行;历史会话后来过期后,无需再创建一把 Key 也会自动收缩。若没有安全删除对象,池允许暂时超过上限。未被回收的池状态持久化并在重启后对账复用。只管理 `aihub-auto-g{groupId}` 前缀 Key,不触碰用户 Key。`/ctl/status` 只返回 `keyId/lastUsedAt`,不返回 `sk`。
 
 ## 10. Koishi topN
 
@@ -156,7 +160,7 @@ pool 是默认模式。`ensureKey(groupId)` 使用同组 single-flight,不同组
 按 score 降序,保留 score >= best - scoreWindow(默认 0.15),最多 6 条
 ```
 
-Koishi 只使用公开 OpenAI 统计,不参与请求面会话路由。
+Koishi 只使用公开 OpenAI 统计,不参与请求面会话路由;其 `economy` 推荐同样只展示最低有效倍率层。
 
 ## 11. 默认参数
 

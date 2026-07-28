@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-aihub-auto",
-  "version": "0.1.0",
-  "description": "查询 AIHub 当前最优分组推荐,支持指定适配器/群号(通配符),条数自适应",
+  "version": "0.2.1",
+  "description": "查询 AIHub 当前最优分组,或最高倍率层中最慢的单个最烂分组",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -11,7 +11,8 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.cjs"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": ["dist"],
   "license": "MIT",
@@ -24,8 +25,8 @@
   "homepage": "https://github.com/WSXYT/aihub-auto",
   "koishi": {
     "description": {
-      "zh": "查询 AIHub 当前最优分组推荐(价格×首字延迟评分,条数自适应 1~6)",
-      "en": "Query current optimal AIHub group recommendations"
+      "zh": "查询 AIHub 当前最优分组,或最高倍率且最慢的单个最烂分组",
+      "en": "Query current best or worst AIHub groups"
     },
     "service": {
       "required": ["http"]

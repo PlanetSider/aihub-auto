@@ -36,8 +36,11 @@ export function computeConfidence(
 function exclude(
 	stat: GroupStat,
 	reason: ExcludedCandidate["excludeReason"],
+	effectiveRate?: number,
 ): ExcludedCandidate {
-	return { stat, excluded: true, excludeReason: reason };
+	return effectiveRate === undefined
+		? { stat, excluded: true, excludeReason: reason }
+		: { stat, effectiveRate, excluded: true, excludeReason: reason };
 }
 
 function clamp01(value: number): number {
@@ -90,11 +93,11 @@ export function evaluate(
 			continue;
 		}
 		if (rate < options.priceBand.min || rate > options.priceBand.max) {
-			excluded.push(exclude(stat, "price_band"));
+			excluded.push(exclude(stat, "price_band", rate));
 			continue;
 		}
 		if (blacklist.has(stat.groupId)) {
-			excluded.push(exclude(stat, "blacklisted"));
+			excluded.push(exclude(stat, "blacklisted", rate));
 			continue;
 		}
 
@@ -109,7 +112,7 @@ export function evaluate(
 			recentSamples >= 3 &&
 			observation.errorRate > options.errorRateCap
 		) {
-			excluded.push(exclude(stat, "local_error_rate"));
+			excluded.push(exclude(stat, "local_error_rate", rate));
 			continue;
 		}
 
@@ -148,11 +151,11 @@ export function evaluate(
 					: !publicTimeValid || age > options.maxStatusAgeMs
 						? "stale_sample"
 						: "future_sample";
-			excluded.push(exclude(stat, reason));
+			excluded.push(exclude(stat, reason, rate));
 			continue;
 		}
 		if (publicConfidence < MIN_CONFIDENCE && !localLatencyValid) {
-			excluded.push(exclude(stat, "low_confidence"));
+			excluded.push(exclude(stat, "low_confidence", rate));
 			continue;
 		}
 
@@ -214,15 +217,24 @@ export function evaluate(
 	if (pre.length === 0) return { eligible: [], excluded };
 
 	const minimumRate = Math.min(...pre.map((candidate) => candidate.rate));
-	const baselinePre = pre
-		.filter((candidate) => candidate.rate === minimumRate)
-		.reduce((left, right) =>
-			right.conservativeLatencyMs < left.conservativeLatencyMs ? right : left,
-		);
+	const cheapest = pre.filter((candidate) => candidate.rate === minimumRate);
+	const baselinePre = cheapest.reduce((left, right) =>
+		right.conservativeLatencyMs < left.conservativeLatencyMs ? right : left,
+	);
+	const strictEconomy = options.mode === "economy";
+	const selectable = strictEconomy ? cheapest : pre;
+	if (strictEconomy) {
+		for (const candidate of pre) {
+			if (candidate.rate > minimumRate)
+				excluded.push(
+					exclude(candidate.stat, "economy_price_tier", candidate.rate),
+				);
+		}
+	}
 	const weights = MODE_WEIGHTS[options.mode];
 	const zeroBase = minimumRate <= 0;
 
-	const eligible: ScoredCandidate[] = pre.map((candidate) => {
+	const eligible: ScoredCandidate[] = selectable.map((candidate) => {
 		const speedup =
 			baselinePre.conservativeLatencyMs / candidate.conservativeLatencyMs - 1;
 		const premium = zeroBase

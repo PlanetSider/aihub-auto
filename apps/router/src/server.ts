@@ -51,14 +51,25 @@ export async function handleControl(
 	const path = url.pathname;
 
 	if (path === "/ctl/status" && req.method === "GET") {
+		const now = Date.now();
 		const round = deps.daemon.lastRound;
-		const candidates: unknown[] = [];
+		const candidates: Array<{
+			groupId: number;
+			code: string;
+			rate: number;
+			ttft?: number;
+			conservative?: number;
+			confidence?: number;
+			score?: number | string;
+			excluded: boolean;
+			excludeReason?: string;
+		}> = [];
 		if (round) {
 			for (const c of round.evaluation.eligible) {
 				candidates.push({
 					groupId: c.stat.groupId,
 					code: c.stat.code,
-					rate: c.stat.rateMultiplier,
+					rate: c.effectiveRate,
 					ttft: Math.round(c.blendedTtftMs),
 					conservative: Math.round(c.conservativeLatencyMs),
 					confidence: Number(c.confidence.toFixed(2)),
@@ -70,22 +81,73 @@ export async function handleControl(
 				candidates.push({
 					groupId: e.stat.groupId,
 					code: e.stat.code,
-					rate: e.stat.rateMultiplier,
+					rate: e.effectiveRate ?? e.stat.rateMultiplier,
 					excluded: true,
 					excludeReason: e.excludeReason,
 				});
 			}
 		}
-		const currentCode = round?.evaluation.eligible.find(
-			(c) => c.stat.groupId === deps.state.currentGroupId,
-		)?.stat.code;
+		const affinity = deps.proxyDeps.affinity.stats(now);
+		const traffic = deps.proxyDeps.traffic.snapshot(now);
+		const candidateByGroup = new Map(
+			candidates.map((candidate) => [candidate.groupId, candidate]),
+		);
+		const groupIds = new Set([
+			...(deps.state.currentGroupId === undefined
+				? []
+				: [deps.state.currentGroupId]),
+			...Object.keys(deps.state.pool).map(Number),
+			...Object.keys(affinity.byGroup).map(Number),
+			...Object.keys(affinity.aliasesByGroup).map(Number),
+			...Object.keys(traffic.activeByGroup ?? {}).map(Number),
+		]);
+		const poolSize = Object.keys(deps.state.pool).length;
+		const groups = [...groupIds]
+			.sort((left, right) => left - right)
+			.map((groupId) => {
+				const candidate = candidateByGroup.get(groupId);
+				const key = deps.state.pool[String(groupId)];
+				const sessions = affinity.byGroup[String(groupId)] ?? 0;
+				const responseAliases = affinity.aliasesByGroup[String(groupId)] ?? 0;
+				const activeRequests = traffic.activeByGroup?.[String(groupId)] ?? 0;
+				const idleMs = key ? Math.max(now - key.lastUsedAt, 0) : undefined;
+				const protectedGroup =
+					groupId === deps.state.currentGroupId ||
+					sessions > 0 ||
+					responseAliases > 0 ||
+					activeRequests > 0;
+				return {
+					groupId,
+					code: candidate?.code ?? null,
+					rate: candidate?.rate ?? null,
+					current: groupId === deps.state.currentGroupId,
+					keyId: key?.keyId ?? null,
+					keyLastUsedAt: key?.lastUsedAt ?? null,
+					idleMs: idleMs ?? null,
+					sessions,
+					responseAliases,
+					activeRequests,
+					reclaimable: Boolean(
+						key &&
+							poolSize > deps.config.poolMaxGroups &&
+							!protectedGroup &&
+							idleMs !== undefined &&
+							idleMs >= deps.config.decision.cacheIdleMs,
+					),
+				};
+			});
+		const currentCode = candidateByGroup.get(
+			deps.state.currentGroupId ?? -1,
+		)?.code;
 		return json({
 			currentGroupId: deps.state.currentGroupId ?? null,
 			currentCode: currentCode ?? null,
 			config: {
 				mode: deps.config.mode,
 				keyMode: deps.config.keyMode,
+				poolMaxGroups: deps.config.poolMaxGroups,
 				priceBand: deps.config.priceBand,
+				cacheIdleMs: deps.config.decision.cacheIdleMs,
 				blacklist: deps.config.blacklist,
 			},
 			pool: Object.fromEntries(
@@ -94,11 +156,12 @@ export async function handleControl(
 					{ keyId: entry.keyId, lastUsedAt: entry.lastUsedAt },
 				]),
 			),
-			affinity: deps.proxyDeps.affinity.stats(),
+			groups,
+			affinity,
 			modelBlocks: deps.daemon.modelBlockStats(),
 			hasToken: Boolean(deps.credentials.accessToken),
 			needsReauth: deps.daemon.needsReauth,
-			traffic: deps.proxyDeps.traffic.snapshot(),
+			traffic,
 			stale: round?.stale ?? false,
 			candidates,
 		});
@@ -223,6 +286,17 @@ export function createServer(deps: ServerDeps): ReturnType<typeof Bun.serve> {
 			}
 			if (path === "/healthz") {
 				return json({ ok: true, group: deps.state.currentGroupId ?? null });
+			}
+			if (path === "/v1" || path === "/v1/") {
+				return json(
+					{
+						name: "aihub-auto",
+						status: "ok",
+						message: "OpenAI-compatible API proxy. Use a concrete /v1 endpoint.",
+						ui: "/ui",
+					},
+					req.method === "GET" || req.method === "HEAD" ? 200 : 404,
+				);
 			}
 			// 其余全部按上游 API 反代
 			return handleProxy(req, deps.proxyDeps);

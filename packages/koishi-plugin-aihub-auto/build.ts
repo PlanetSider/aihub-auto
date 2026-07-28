@@ -45,6 +45,7 @@ export interface Config {
   strategyText: string;
   downloadUrl: string;
   template: string;
+  worstTemplate: string;
   cacheTtlMs: number;
   cooldownMs: number;
   respondPrivate: boolean;

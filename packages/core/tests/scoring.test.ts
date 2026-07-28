@@ -123,13 +123,21 @@ describe("硬过滤", () => {
 });
 
 describe("评分与模式", () => {
-	// 便宜慢组 vs 贵快组
+	// 便宜慢组 vs 贵快组;快组足够快时,旧版 economy 也会选它。
 	const cheap = stat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 5000 });
-	const fast = stat({ groupId: 2, rateMultiplier: 0.08, avgTtftMs: 900 });
+	const fast = stat({ groupId: 2, rateMultiplier: 0.08, avgTtftMs: 200 });
 
-	test("economy 选便宜,speed 选快", () => {
+	test("economy 锁定最低有效倍率层,speed 仍可选极快高价组", () => {
 		const eco = evaluate([cheap, fast], opts({ mode: "economy" }));
-		expect(eco.eligible[0]?.stat.groupId).toBe(1);
+		expect(eco.eligible.map((candidate) => candidate.stat.groupId)).toEqual([
+			1,
+		]);
+		expect(eco.excluded).toContainEqual({
+			stat: fast,
+			effectiveRate: 0.08,
+			excluded: true,
+			excludeReason: "economy_price_tier",
+		});
 		const spd = evaluate([cheap, fast], opts({ mode: "speed" }));
 		expect(spd.eligible[0]?.stat.groupId).toBe(2);
 	});

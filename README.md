@@ -5,7 +5,7 @@
 | 目录 | 说明 |
 | --- | --- |
 | [`apps/router`](apps/router) | 跨平台单二进制反代:自动 Key 池、会话亲和、P2C/Peak-EWMA 动态均衡、请求本地故障转移、Web 控制台 |
-| [`packages/koishi-plugin-aihub-auto`](packages/koishi-plugin-aihub-auto) | Koishi 插件:群聊查询当前最优分组(条数自适应 1~6) |
+| [`packages/koishi-plugin-aihub-auto`](packages/koishi-plugin-aihub-auto) | Koishi 插件:群聊查询最优分组(自适应 1~6)或单个最烂分组(最高倍率、同倍率最慢) |
 | [`packages/core`](packages/core) | 共享算法核心:评分/决策/熔断/本地观测,零运行时依赖,[算法说明](packages/core/ALGORITHM.md) |
 
 ## 应用下载
@@ -22,6 +22,8 @@
 - **双执行模式**:默认自动 Key 池按组单飞创建/安全回收 Key;single 兼容模式继续支持单 Key `PUT` 切组
 - **模型感知**:从强 `model_not_found`/不支持响应学习 `(group, model)` 能力,只迁移受影响会话
 - **三种策略**:省钱 / 均衡 / 速度,价格区间硬约束 + 黑名单
+- **运维控制台**:展示有效倍率、候选排除原因、会话/Responses 分支、在飞请求和 Key 池保留/回收状态
+- **稳定性诊断**:客户端断流安全收尾,浏览器访问 `/v1` 本地响应,生命周期和未处理异常写入 `crash.log`
 
 ## 开发
 

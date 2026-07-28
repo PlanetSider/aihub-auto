@@ -71,6 +71,41 @@ describe("守护循环", () => {
 	});
 });
 
+describe("省钱优先", () => {
+	test("新会话只选最低价层,该层失败后才升档,连续会话仍回原组", async () => {
+		h = createHarness({
+			configPatch: { keyMode: "pool", mode: "economy" },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 4_000 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.02, avgTtftMs: 5_000 }),
+			makeStat({ groupId: 3, rateMultiplier: 0.03, avgTtftMs: 100 }),
+		];
+		await h.daemon.runOnce();
+
+		for (let index = 0; index < 8; index++) {
+			const key = await h.daemon.route({ sessionKey: `new-${index}` });
+			expect(key?.groupId === 1 || key?.groupId === 2).toBe(true);
+			key?.release?.();
+		}
+
+		const fallback = await h.daemon.route({
+			sessionKey: "fallback",
+			failedGroupIds: [1, 2],
+		});
+		expect(fallback?.groupId).toBe(3);
+		fallback?.release?.();
+
+		h.affinity.bind("continued", 3);
+		const continued = await h.daemon.route({
+			sessionKey: "continued",
+			continuity: true,
+		});
+		expect(continued?.groupId).toBe(3);
+		continued?.release?.();
+	});
+});
+
 describe("缓存感知端到端", () => {
 	test("持续流量中小幅更优 ⇒ 不切(hold_cache);流量停止后 ⇒ pending_realized", async () => {
 		h = createHarness({
@@ -191,7 +226,10 @@ describe("控制台 API", () => {
 		expect(route.shouldSwitch).toBe(true);
 		expect(route.targetGroupId).toBe(1);
 
-		// status 含候选与排除原因
+		// status 含候选、排除原因和逐组使用状态
+		h.affinity.bind("session-1", 1);
+		h.affinity.bindResponse("resp_1", "session-1", 1);
+		h.traffic.begin(1);
 		const statusRes = await fetch(`${base}/ctl/status`);
 		const statusText = await statusRes.text();
 		expect(statusText).not.toContain("sk-mock");
@@ -204,12 +242,27 @@ describe("控制台 API", () => {
 				excludeReason?: string;
 			}[];
 			pool: Record<string, { keyId: number; lastUsedAt: number }>;
-			affinity: { sessions: number };
+			affinity: { sessions: number; responseAliases: number };
+			groups: Array<{
+				groupId: number;
+				keyId: number | null;
+				sessions: number;
+				responseAliases: number;
+				activeRequests: number;
+			}>;
 			hasToken: boolean;
 		};
 		expect(status.currentGroupId).toBe(1);
 		expect(status.pool["1"]?.keyId).toBeDefined();
-		expect(status.affinity.sessions).toBe(0);
+		expect(status.affinity.sessions).toBe(1);
+		expect(status.affinity.responseAliases).toBe(1);
+		expect(status.groups.find((group) => group.groupId === 1)).toMatchObject({
+			keyId: status.pool["1"]?.keyId,
+			sessions: 1,
+			responseAliases: 1,
+			activeRequests: 1,
+		});
+		h.traffic.end(1);
 		expect(status.hasToken).toBe(true);
 		const excluded = status.candidates.find((c) => c.groupId === 2);
 		expect(excluded?.excluded).toBe(true);
@@ -266,6 +319,13 @@ describe("控制台 API", () => {
 			).status,
 		).toBe(200);
 		expect((await fetch(`${base}/healthz`)).status).toBe(200);
+		const apiRoot = await fetch(`${base}/v1`);
+		expect(apiRoot.status).toBe(200);
+		expect(await apiRoot.json()).toMatchObject({
+			name: "aihub-auto",
+			status: "ok",
+			ui: "/ui",
+		});
 		const ui = await fetch(`${base}/ui`);
 		expect(ui.status).toBe(200);
 		expect(await ui.text()).toContain("aihub-auto");

@@ -223,6 +223,7 @@ export class RouteDaemon {
 			this.deps.state.breaker = this.deps.breaker.toJSON();
 			this.deps.state.observations = this.deps.observations.toJSON();
 			await this.deps.persistState();
+			await this.deps.executor.trimPool();
 		}
 
 		await this.deps.audit.append({
@@ -418,15 +419,16 @@ export class RouteDaemon {
 				});
 			}
 		}
+		// 连续会话必须按上游状态所在组完成;这里仅检查硬约束,不套用 economy 的排序层。
 		return evaluate(
 			[...items],
-			this.scoringOptions("openai", now, [...blocked], true),
+			{
+				...this.scoringOptions("openai", now, [...blocked], true),
+				mode: "balanced",
+			},
 			observations,
 			this.userRates,
-		).eligible.some(
-			(candidate) =>
-				candidate.stat.groupId === groupId && Number.isFinite(candidate.score),
-		);
+		).eligible.some((candidate) => candidate.stat.groupId === groupId);
 	}
 
 	private async prepareRequestKey(

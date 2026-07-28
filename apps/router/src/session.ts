@@ -374,12 +374,19 @@ export class SessionAffinity {
 		cacheHits: number;
 		cacheMisses: number;
 		byGroup: Record<string, number>;
+		aliasesByGroup: Record<string, number>;
 	} {
 		this.prune(now);
 		const byGroup: Record<string, number> = {};
+		const aliasesByGroup: Record<string, number> = {};
 		for (const binding of Object.values(this.state.sessions)) {
 			const key = String(binding.groupId);
 			byGroup[key] = (byGroup[key] ?? 0) + 1;
+		}
+		for (const alias of Object.values(this.state.responseAliases)) {
+			if (alias.groupId === undefined) continue;
+			const key = String(alias.groupId);
+			aliasesByGroup[key] = (aliasesByGroup[key] ?? 0) + 1;
 		}
 		const bindings = Object.values(this.state.sessions);
 		return {
@@ -390,6 +397,7 @@ export class SessionAffinity {
 			cacheMisses: bindings.filter((binding) => binding.cacheStatus === "miss")
 				.length,
 			byGroup,
+			aliasesByGroup,
 		};
 	}
 

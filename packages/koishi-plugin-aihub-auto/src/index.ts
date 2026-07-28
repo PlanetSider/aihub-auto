@@ -1,7 +1,7 @@
-import { type Context, Schema, h } from "koishi";
+import { type Context, Schema } from "koishi";
 import { matchRule } from "./matcher.ts";
-import { RecommendService } from "./service.ts";
-import { DEFAULT_TEMPLATE, render } from "./format.ts";
+import { RecommendService, type RecommendationKind } from "./service.ts";
+import { DEFAULT_TEMPLATE, DEFAULT_WORST_TEMPLATE, render } from "./format.ts";
 
 export const name = "aihub-auto";
 
@@ -15,6 +15,7 @@ export interface Config {
 	strategyText: string;
 	downloadUrl: string;
 	template: string;
+	worstTemplate: string;
 	cacheTtlMs: number;
 	cooldownMs: number;
 	respondPrivate: boolean;
@@ -61,7 +62,15 @@ export const Config: Schema<Config> = Schema.object({
 	template: Schema.string()
 		.role("textarea")
 		.default(DEFAULT_TEMPLATE)
-		.description("回复模板,支持 {strategy} / {items} / {download} 变量。"),
+		.description(
+			"最优分组回复模板,支持 {strategy} / {items} / {download} 变量。",
+		),
+	worstTemplate: Schema.string()
+		.role("textarea")
+		.default(DEFAULT_WORST_TEMPLATE)
+		.description(
+			"最烂分组回复模板,支持 {strategy} / {items} / {download} 变量。",
+		),
 	cacheTtlMs: Schema.number()
 		.min(0)
 		.default(30_000)
@@ -76,7 +85,12 @@ export const Config: Schema<Config> = Schema.object({
 		.description("数据获取失败时的降级回复。"),
 });
 
-const TRIGGERS = new Set(["最优分组", "/最优分组"]);
+const TRIGGERS = new Map<string, RecommendationKind>([
+	["最优分组", "best"],
+	["/最优分组", "best"],
+	["最烂分组", "worst"],
+	["/最烂分组", "worst"],
+]);
 
 export function apply(ctx: Context, config: Config): void {
 	const logger = ctx.logger("aihub-auto");
@@ -106,6 +120,7 @@ export function apply(ctx: Context, config: Config): void {
 	async function respond(
 		messageId: string | undefined,
 		scopeKey: string,
+		kind: RecommendationKind,
 	): Promise<string | undefined> {
 		if (messageId) {
 			if (handled.has(messageId)) return undefined;
@@ -115,21 +130,27 @@ export function apply(ctx: Context, config: Config): void {
 				if (first !== undefined) handled.delete(first);
 			}
 		}
-		if (underCooldown(scopeKey)) return undefined;
+		if (underCooldown(`${scopeKey}:${kind}`)) return undefined;
 		try {
-			const recs = await service.recommend({
-				baseUrl: config.baseUrl,
-				mode: config.mode,
-				maxRate: config.maxRate,
-				samples: config.samples,
-				scoreWindow: config.scoreWindow,
-				cacheTtlMs: config.cacheTtlMs,
-				getJson: (url) => ctx.http.get(url, { responseType: "json" }),
-			});
+			const recs = await service.recommend(
+				{
+					baseUrl: config.baseUrl,
+					mode: config.mode,
+					maxRate: config.maxRate,
+					samples: config.samples,
+					scoreWindow: config.scoreWindow,
+					cacheTtlMs: config.cacheTtlMs,
+					getJson: (url) => ctx.http.get(url, { responseType: "json" }),
+				},
+				kind,
+			);
 			if (recs.length === 0) return config.errorText;
 			return render(recs, {
-				template: config.template,
-				strategyText: config.strategyText,
+				template: kind === "worst" ? config.worstTemplate : config.template,
+				strategyText:
+					kind === "worst"
+						? "最高倍率优先,同倍率首字最慢"
+						: config.strategyText,
 				downloadUrl: config.downloadUrl,
 			});
 		} catch (err) {
@@ -147,9 +168,12 @@ export function apply(ctx: Context, config: Config): void {
 	}
 
 	// 通道 1:正规指令(支持已配置 prefix 的实例、help 集成)
-	ctx
-		.command("最优分组", "查询 AIHub 当前最优分组推荐")
-		.action(async ({ session }) => {
+	function registerCommand(
+		command: string,
+		description: string,
+		kind: RecommendationKind,
+	): void {
+		ctx.command(command, description).action(async ({ session }) => {
 			if (!session) return;
 			if (
 				!inScope(
@@ -162,8 +186,12 @@ export function apply(ctx: Context, config: Config): void {
 			return respond(
 				session.messageId,
 				scopeKey(session.platform, session.guildId, session.userId),
+				kind,
 			);
 		});
+	}
+	registerCommand("最优分组", "查询 AIHub 当前最优分组推荐", "best");
+	registerCommand("最烂分组", "查询 AIHub 当前最低评分分组", "worst");
 
 	// 通道 2:裸文本中间件(未配置 prefix 时 `最优分组`/`/最优分组` 也能触发)
 	ctx.middleware(async (session, next) => {
@@ -174,7 +202,8 @@ export function apply(ctx: Context, config: Config): void {
 					.join("")
 					.trim()
 			: (session.content ?? "").trim();
-		if (!TRIGGERS.has(text)) return next();
+		const kind = TRIGGERS.get(text);
+		if (!kind) return next();
 		if (
 			!inScope(
 				session.platform,
@@ -186,6 +215,7 @@ export function apply(ctx: Context, config: Config): void {
 		const reply = await respond(
 			session.messageId,
 			scopeKey(session.platform, session.guildId, session.userId),
+			kind,
 		);
 		if (reply === undefined) return next();
 		return reply;

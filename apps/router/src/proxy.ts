@@ -205,22 +205,29 @@ export async function handleProxy(
 			return response;
 		}
 		const reader = response.body.getReader();
+		let bodyClosed = false;
 		const body = new ReadableStream<Uint8Array>({
 			async pull(controller) {
 				try {
 					const { done, value } = await reader.read();
+					if (bodyClosed) return;
 					if (done) {
+						bodyClosed = true;
 						finish();
 						controller.close();
 					} else controller.enqueue(value);
 				} catch (err) {
 					finish();
-					controller.error(err);
+					if (!bodyClosed) {
+						bodyClosed = true;
+						controller.error(err);
+					}
 				}
 			},
 			async cancel(reason) {
+				bodyClosed = true;
 				try {
-					await reader.cancel(reason);
+					await reader.cancel(reason).catch(() => {});
 				} finally {
 					finish();
 				}
@@ -427,19 +434,29 @@ async function handleProxyRequest(
 
 			if (upstreamReader) {
 				let firstPending = prefetched;
+				let wrapperClosed = false;
 				const reader = upstreamReader;
 				const bodyWithFirst = new ReadableStream<Uint8Array>({
 					async pull(streamController) {
 						try {
 							const result = firstPending ?? (await reader.read());
 							firstPending = undefined;
-							if (result.done) streamController.close();
-							else if (result.value) streamController.enqueue(result.value);
+							if (wrapperClosed) return;
+							if (result.done) {
+								wrapperClosed = true;
+								streamController.close();
+							} else if (result.value) streamController.enqueue(result.value);
 						} catch (err) {
-							streamController.error(err);
+							if (!wrapperClosed) {
+								wrapperClosed = true;
+								streamController.error(err);
+							}
 						}
 					},
-					cancel: (reason) => reader.cancel(reason),
+					async cancel(reason) {
+						wrapperClosed = true;
+						await reader.cancel(reason).catch(() => {});
+					},
 				});
 				response = new Response(bodyWithFirst, {
 					status: response.status,
@@ -550,11 +567,14 @@ async function handleProxyRequest(
 				});
 			}
 			const reader = response.body.getReader();
+			let pipeClosed = false;
 			const piped = new ReadableStream<Uint8Array>({
 				async pull(streamController) {
 					try {
 						const { done, value } = await reader.read();
+						if (pipeClosed) return;
 						if (done) {
+							pipeClosed = true;
 							inspectResponseMetadata(new Uint8Array(), true);
 							recordSuccess();
 							endOnce();
@@ -567,13 +587,17 @@ async function handleProxyRequest(
 					} catch (err) {
 						recordStreamFailure();
 						endOnce();
-						streamController.error(err);
+						if (!pipeClosed) {
+							pipeClosed = true;
+							streamController.error(err);
+						}
 					}
 				},
 				async cancel(reason) {
+					pipeClosed = true;
 					deps.reportNeutral(groupId);
 					endOnce();
-					await reader.cancel(reason);
+					await reader.cancel(reason).catch(() => {});
 				},
 			});
 			return new Response(piped, {

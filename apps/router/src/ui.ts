@@ -6,158 +6,88 @@ export const UI_HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>aihub-auto 控制台</title>
 <style>
-:root{--bg:#fff;--fg:#1a1a2e;--muted:#667;--card:#f6f7fb;--accent:#4f6df5;--ok:#18a058;--warn:#d97706;--err:#dc2626;--border:#e3e6ef}
-@media(prefers-color-scheme:dark){:root{--bg:#101218;--fg:#e8eaf2;--muted:#99a;--card:#1a1e2a;--accent:#7c94ff;--ok:#3dd68c;--warn:#f5a623;--err:#ff6b6b;--border:#2a2f3f}}
-*{box-sizing:border-box}body{margin:0;font:14px/1.6 system-ui,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);padding:20px;max-width:1080px;margin-inline:auto}
-h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:0 0 10px}
-.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));margin-top:16px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px}
-.card.wide{grid-column:1/-1}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
-th{color:var(--muted);font-weight:500}
-.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:var(--accent);color:#fff}
-.badge.ok{background:var(--ok)}.badge.warn{background:var(--warn)}.badge.err{background:var(--err)}
-button,select,input{font:inherit;padding:6px 12px;border-radius:7px;border:1px solid var(--border);background:var(--bg);color:var(--fg)}
-button{cursor:pointer;background:var(--accent);color:#fff;border:none}
-button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
-.muted{color:var(--muted);font-size:12px}
-#toast{position:fixed;bottom:20px;right:20px;background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:8px;opacity:0;transition:.3s}
-#toast.show{opacity:1}
-dialog{border:1px solid var(--border);border-radius:12px;background:var(--card);color:var(--fg);max-width:400px}
-dialog::backdrop{background:#0008}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:13px}
-.kv dt{color:var(--muted)}.kv dd{margin:0}
+:root{color-scheme:light;--bg:#f3f5f7;--panel:#fff;--fg:#182026;--muted:#68717a;--border:#d9dee3;--accent:#1769aa;--accent-hover:#115487;--ok:#147a45;--ok-bg:#eaf6ef;--warn:#955500;--warn-bg:#fff4df;--err:#bd2c2c;--err-bg:#fcecec;--neutral-bg:#edf0f2;--shadow:0 1px 2px #18202612}
+@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#151718;--panel:#202325;--fg:#eef0f2;--muted:#a3abb2;--border:#3b4044;--accent:#66a8dc;--accent-hover:#8abde3;--ok:#58bd83;--ok-bg:#173a28;--warn:#e6ac55;--warn-bg:#443217;--err:#ee7777;--err-bg:#482323;--neutral-bg:#303438;--shadow:none}}
+*{box-sizing:border-box}html{background:var(--bg)}body{margin:0;font:14px/1.5 system-ui,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);letter-spacing:0}button,select,input{font:inherit;letter-spacing:0}button{min-height:34px;padding:6px 12px;border:1px solid transparent;border-radius:5px;background:var(--accent);color:#fff;cursor:pointer;font-weight:600}button:hover{background:var(--accent-hover)}button:disabled{cursor:wait;opacity:.58}.secondary{background:var(--panel);color:var(--accent);border-color:var(--accent)}.secondary:hover{background:var(--neutral-bg)}input,select{min-height:34px;padding:5px 9px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--fg)}input[type=number]{width:84px}input[type=checkbox]{min-height:auto;accent-color:var(--accent)}label{color:var(--muted);font-size:12px}.shell{max-width:1280px;margin:0 auto;padding:18px}.appbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.brand{display:flex;align-items:baseline;gap:9px}.brand h1{font-size:20px;line-height:1.2;margin:0}.brand span{color:var(--muted);font-size:12px}.actions{display:flex;align-items:center;gap:8px}.status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border);border-radius:6px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden;margin-bottom:14px}.metric{padding:12px 14px;border-right:1px solid var(--border);min-width:0}.metric:last-child{border-right:0}.metric-label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.metric-value{display:block;margin-top:2px;font-size:16px;font-weight:650;overflow-wrap:anywhere}.metric-sub{display:block;color:var(--muted);font-size:12px;margin-top:1px;min-height:18px}.workspace{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(300px,.7fr);gap:14px}.panel{border:1px solid var(--border);border-radius:6px;background:var(--panel);box-shadow:var(--shadow);min-width:0}.panel.wide{grid-column:1/-1}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border)}.panel-head h2{font-size:14px;margin:0}.panel-meta{color:var(--muted);font-size:12px}.panel-body{padding:13px 14px}.controls{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.field{display:grid;gap:3px}.field.grow{flex:1;min-width:150px}.range{display:flex;align-items:center;gap:6px}.decision{margin-top:10px;padding-top:9px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;min-height:28px}.auth-grid{display:grid;grid-template-columns:1fr;gap:9px}.auth-row{display:flex;gap:8px}.auth-row input{min-width:0;flex:1}.auth-divider{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px}.auth-divider:before,.auth-divider:after{content:"";height:1px;background:var(--border);flex:1}.table-wrap{width:100%;overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600;z-index:1}tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--neutral-bg)}td.num{text-align:right;font-variant-numeric:tabular-nums}.group-name{font-weight:650}.subtle{color:var(--muted)}.chips{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.chip{display:inline-flex;align-items:center;min-height:21px;padding:1px 6px;border-radius:3px;background:var(--neutral-bg);color:var(--fg);font-size:11px;font-weight:600}.chip.ok{background:var(--ok-bg);color:var(--ok)}.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.err{background:var(--err-bg);color:var(--err)}.empty{padding:24px;text-align:center;color:var(--muted)}#toast{position:fixed;right:18px;bottom:18px;max-width:min(420px,calc(100vw - 36px));padding:10px 13px;border-radius:5px;background:var(--fg);color:var(--bg);box-shadow:0 6px 20px #0003;opacity:0;transform:translateY(6px);pointer-events:none;transition:.18s}#toast.show{opacity:1;transform:none}
+@media(max-width:760px){.shell{padding:12px}.appbar{align-items:flex-start}.brand{display:grid;gap:1px}.status-grid{grid-template-columns:1fr 1fr}.metric:nth-child(2){border-right:0}.metric:nth-child(-n+2){border-bottom:1px solid var(--border)}.workspace{grid-template-columns:1fr}.panel.wide{grid-column:auto}.controls{align-items:stretch}.field,.field.grow{width:100%}.range input{flex:1;width:0}.controls button{flex:1}.auth-row{flex-wrap:wrap}.auth-row button{width:100%}}
 </style>
 </head>
 <body>
-<h1>aihub-auto <span class="muted">最优分组自动路由</span></h1>
-<div class="muted" id="version"></div>
+<div class="shell">
+  <header class="appbar">
+    <div class="brand"><h1>aihub-auto</h1><span>OpenAI 分组路由</span></div>
+    <div class="actions"><span id="dataState" class="chip">载入中</span><button class="secondary" id="refresh">刷新</button></div>
+  </header>
 
-<div class="grid">
-  <div class="card">
-    <h2>状态</h2>
-    <dl class="kv">
-      <dt>当前分组</dt><dd id="curGroup">-</dd>
-      <dt>策略</dt><dd id="curMode">-</dd>
-      <dt>Key 模式</dt><dd id="curKeyMode">-</dd>
-      <dt>登录</dt><dd id="authState">-</dd>
-      <dt>近 5 分钟请求</dt><dd id="reqCount">-</dd>
-      <dt>数据</dt><dd id="staleState">-</dd>
-    </dl>
-  </div>
+  <section class="status-grid" aria-label="路由概览">
+    <div class="metric"><span class="metric-label">默认分组</span><span class="metric-value" id="curGroup">-</span><span class="metric-sub" id="curGroupSub"></span></div>
+    <div class="metric"><span class="metric-label">路由策略</span><span class="metric-value" id="curMode">-</span><span class="metric-sub" id="modeTier"></span></div>
+    <div class="metric"><span class="metric-label">自动 Key</span><span class="metric-value" id="keyPool">-</span><span class="metric-sub" id="keyPoolSub"></span></div>
+    <div class="metric"><span class="metric-label">近 5 分钟</span><span class="metric-value" id="reqCount">-</span><span class="metric-sub" id="trafficSub"></span></div>
+  </section>
 
-  <div class="card">
-    <h2>策略</h2>
-    <div class="row">
-      <select id="mode">
-        <option value="economy">省钱优先</option>
-        <option value="balanced">均衡</option>
-        <option value="speed">速度优先</option>
-      </select>
-      <button id="saveCfg">保存</button>
-    </div>
-    <div class="row">
-      <label>倍率区间 <input id="priceMin" type="number" step="0.01" style="width:70px"> ~ <input id="priceMax" type="number" step="0.01" style="width:70px"></label>
-    </div>
-    <div class="row">
-      <button class="ghost" id="routeOnce">立即路由</button>
-      <button class="ghost" id="dryRun">模拟(dry-run)</button>
-    </div>
-    <div class="muted" id="lastDecision"></div>
-  </div>
+  <main class="workspace">
+    <section class="panel">
+      <div class="panel-head"><h2>路由策略</h2><span class="panel-meta" id="policyState"></span></div>
+      <div class="panel-body">
+        <div class="controls">
+          <div class="field grow"><label for="mode">模式</label><select id="mode"><option value="economy">省钱优先</option><option value="balanced">均衡</option><option value="speed">速度优先</option></select></div>
+          <div class="field"><label for="priceMin">倍率区间</label><div class="range"><input id="priceMin" type="number" min="0" step="0.01" aria-label="最低倍率"><span>至</span><input id="priceMax" type="number" min="0" step="0.01" aria-label="最高倍率"></div></div>
+          <button id="saveCfg">保存</button>
+          <button class="secondary" id="routeOnce">立即路由</button>
+          <button class="secondary" id="dryRun">模拟</button>
+        </div>
+        <div class="decision" id="lastDecision">尚无手动决策</div>
+      </div>
+    </section>
 
-  <div class="card">
-    <h2>登录 AIHub</h2>
-    <div class="row"><input id="email" type="email" placeholder="邮箱" style="flex:1"></div>
-    <div class="row"><input id="password" type="password" placeholder="密码" style="flex:1"></div>
-    <div class="row"><button id="login">登录</button><span class="muted">或</span></div>
-    <div class="row"><input id="token" type="password" placeholder="直接粘贴 access token" style="flex:1"><button class="ghost" id="saveToken">保存</button></div>
-    <div class="muted">凭据仅存本机配置目录,不上传任何第三方。</div>
-  </div>
+    <section class="panel">
+      <div class="panel-head"><h2>AIHub 账户</h2><span class="panel-meta" id="authState">-</span></div>
+      <div class="panel-body auth-grid">
+        <div class="auth-row"><input id="email" type="email" autocomplete="username" placeholder="邮箱" aria-label="AIHub 邮箱"><input id="password" type="password" autocomplete="current-password" placeholder="密码" aria-label="AIHub 密码"><button id="login">登录</button></div>
+        <div class="auth-divider">或使用 access token</div>
+        <div class="auth-row"><input id="token" type="password" autocomplete="off" placeholder="Access token" aria-label="AIHub access token"><button class="secondary" id="saveToken">保存 Token</button></div>
+      </div>
+    </section>
 
-  <div class="card wide">
-    <h2>候选分组 <span class="muted">(含被排除项与原因,完全可解释)</span></h2>
-    <div style="overflow-x:auto"><table id="candTable">
-      <thead><tr><th>#</th><th>分组</th><th>倍率</th><th>TTFT</th><th>保守延迟</th><th>置信度</th><th>得分</th><th>状态</th><th>黑名单</th></tr></thead>
-      <tbody></tbody>
-    </table></div>
-  </div>
+    <section class="panel wide">
+      <div class="panel-head"><h2>分组使用</h2><span class="panel-meta" id="usageMeta">-</span></div>
+      <div class="table-wrap"><table id="usageTable"><thead><tr><th>分组</th><th>倍率</th><th>角色</th><th>自动 Key</th><th class="num">会话</th><th class="num">Responses 分支</th><th class="num">在飞</th><th>最近使用</th><th>保留状态</th></tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section class="panel wide">
+      <div class="panel-head"><h2>候选分组</h2><span class="panel-meta" id="candidateMeta">-</span></div>
+      <div class="table-wrap"><table id="candTable"><thead><tr><th>排名</th><th>分组</th><th class="num">倍率</th><th class="num">TTFT</th><th class="num">保守延迟</th><th class="num">置信度</th><th class="num">得分</th><th>路由状态</th><th>黑名单</th></tr></thead><tbody></tbody></table></div>
+    </section>
+  </main>
 </div>
-
-<div id="toast"></div>
-
+<div id="toast" role="status" aria-live="polite"></div>
 <script>
 const $=s=>document.querySelector(s);
 let uiPass=localStorage.getItem("aihub-auto-pass")||"";
+let lastStatus;
+const modeName={economy:"省钱优先",balanced:"均衡",speed:"速度优先"};
+const reasonName={platform_mismatch:"平台不匹配",unavailable_group:"账户不可用",invalid_rate:"倍率无效",price_band:"超出倍率区间",blacklisted:"已加入黑名单",stale_sample:"统计已过期",future_sample:"统计时间异常",no_samples:"暂无样本",invalid_latency:"延迟无效",low_confidence:"置信度不足",local_error_rate:"近期错误率过高",economy_price_tier:"高于最低价层"};
+function esc(value){return String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
 function hdrs(){const h={"Content-Type":"application/json"};if(uiPass)h["x-ui-password"]=uiPass;return h}
-function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2600)}
-async function api(path,opts){
-  const res=await fetch(path,Object.assign({headers:hdrs()},opts));
-  if(res.status===401){const p=prompt("控制台口令:");if(p!=null){uiPass=p;localStorage.setItem("aihub-auto-pass",p);return api(path,opts)}throw new Error("需要口令")}
-  const j=await res.json();
-  if(!res.ok)throw new Error(j.error||res.status);
-  return j;
-}
-function fmtScore(s){return s==null?"-":(typeof s==="number"?s.toFixed(3):s)}
-async function refresh(){
-  try{
-    const s=await api("/ctl/status");
-    $("#curGroup").innerHTML=s.currentGroupId!=null?\`<span class="badge ok">#\${s.currentGroupId}\${s.currentCode?" "+s.currentCode:""}</span>\`:"未路由";
-    $("#curMode").textContent={economy:"省钱优先",balanced:"均衡",speed:"速度优先"}[s.config.mode];
-    $("#curKeyMode").textContent=s.config.keyMode==="pool"?\`Key 池(\${Object.keys(s.pool||{}).length} 组)\`:"单 Key 切组";
-    $("#authState").innerHTML=s.needsReauth?'<span class="badge err">token 失效,请重新登录</span>':(s.hasToken?'<span class="badge ok">已登录</span>':'<span class="badge warn">未登录</span>');
-    $("#reqCount").textContent=s.traffic.requestsLast5m+(s.traffic.activeStreams?\`(\${s.traffic.activeStreams} 在飞)\`:"");
-    $("#staleState").innerHTML=s.stale?'<span class="badge warn">上游统计过期(用缓存)</span>':'<span class="badge ok">新鲜</span>';
-    $("#mode").value=s.config.mode;
-    if(document.activeElement?.id!=="priceMin")$("#priceMin").value=s.config.priceBand.min;
-    if(document.activeElement?.id!=="priceMax")$("#priceMax").value=s.config.priceBand.max;
-    const tb=$("#candTable tbody");tb.innerHTML="";
-    let i=0;
-    for(const c of s.candidates){
-      const tr=document.createElement("tr");
-      const cur=c.groupId===s.currentGroupId;
-      tr.innerHTML=\`<td>\${c.excluded?"":++i}</td><td>\${c.code}(#\${c.groupId})\${cur?' <span class="badge ok">当前</span>':""}\${c.breaker&&c.breaker!=="closed"?' <span class="badge err">熔断:'+c.breaker+"</span>":""}</td><td>\${c.rate}x</td><td>\${c.ttft??"-"} ms</td><td>\${c.conservative??"-"} ms</td><td>\${c.confidence??"-"}</td><td>\${fmtScore(c.score)}</td><td>\${c.excluded?'<span class="badge warn">'+c.excludeReason+"</span>":'<span class="badge ok">候选</span>'}</td><td><input type="checkbox" data-gid="\${c.groupId}" \${s.config.blacklist.includes(c.groupId)?"checked":""}></td>\`;
-      tb.appendChild(tr);
-    }
-    tb.querySelectorAll("input[type=checkbox]").forEach(cb=>cb.addEventListener("change",async e=>{
-      const gid=Number(e.target.dataset.gid);
-      const bl=new Set(s.config.blacklist);
-      e.target.checked?bl.add(gid):bl.delete(gid);
-      await api("/ctl/config",{method:"POST",body:JSON.stringify({blacklist:[...bl]})});
-      toast("黑名单已更新");refresh();
-    }));
-  }catch(e){toast("状态获取失败:"+e.message)}
-}
-$("#saveCfg").addEventListener("click",async()=>{
-  await api("/ctl/config",{method:"POST",body:JSON.stringify({
-    mode:$("#mode").value,
-    priceBand:{min:Number($("#priceMin").value),max:Number($("#priceMax").value)}
-  })});toast("配置已保存,热生效");refresh();
-});
-$("#routeOnce").addEventListener("click",async()=>{
-  const r=await api("/ctl/route-once",{method:"POST",body:JSON.stringify({dryRun:false})});
-  $("#lastDecision").textContent=\`决策:\${r.reason}\${r.targetGroupId!=null?" → #"+r.targetGroupId:""}(优势 \${fmtScore(r.advantage)} / 门槛 \${fmtScore(r.effectiveThreshold)})\`;
-  toast(r.shouldSwitch?"已切换到 #"+r.targetGroupId:"保持当前分组");refresh();
-});
-$("#dryRun").addEventListener("click",async()=>{
-  const r=await api("/ctl/route-once",{method:"POST",body:JSON.stringify({dryRun:true})});
-  $("#lastDecision").textContent=\`模拟:\${r.reason}\${r.targetGroupId!=null?" → #"+r.targetGroupId:""}(优势 \${fmtScore(r.advantage)} / 门槛 \${fmtScore(r.effectiveThreshold)});未执行\`;
-});
-$("#login").addEventListener("click",async()=>{
-  try{
-    await api("/ctl/login",{method:"POST",body:JSON.stringify({email:$("#email").value,password:$("#password").value})});
-    $("#password").value="";toast("登录成功");refresh();
-  }catch(e){toast("登录失败:"+e.message)}
-});
-$("#saveToken").addEventListener("click",async()=>{
-  try{
-    await api("/ctl/login",{method:"POST",body:JSON.stringify({token:$("#token").value})});
-    $("#token").value="";toast("token 已保存");refresh();
-  }catch(e){toast("保存失败:"+e.message)}
-});
-refresh();setInterval(refresh,5000);
+function toast(message){const node=$("#toast");node.textContent=message;node.classList.add("show");clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.classList.remove("show"),2800)}
+async function api(path,opts){const res=await fetch(path,Object.assign({headers:hdrs()},opts));if(res.status===401){const pass=prompt("控制台口令:");if(pass!=null){uiPass=pass;localStorage.setItem("aihub-auto-pass",pass);return api(path,opts)}throw new Error("需要控制台口令")}const body=await res.json();if(!res.ok)throw new Error(body.error||String(res.status));return body}
+function fmtScore(value){return typeof value==="number"&&Number.isFinite(value)?value.toFixed(3):"-"}
+function fmtDuration(ms){if(ms==null)return "-";if(ms<60_000)return Math.max(0,Math.round(ms/1000))+" 秒";if(ms<3_600_000)return Math.round(ms/60_000)+" 分钟";return Math.round(ms/3_600_000)+" 小时"}
+function chip(text,tone){return '<span class="chip '+(tone||"")+'">'+esc(text)+"</span>"}
+function setBusy(button,busy){button.disabled=busy;button.setAttribute("aria-busy",String(busy))}
+async function action(button,fn){setBusy(button,true);try{return await fn()}catch(error){toast(error instanceof Error?error.message:String(error))}finally{setBusy(button,false)}}
+function renderUsage(status){const body=$("#usageTable tbody");body.innerHTML="";const groups=status.groups||[];$("#usageMeta").textContent=groups.length+" 个关联分组";if(!groups.length){body.innerHTML='<tr><td colspan="9" class="empty">暂无已使用分组</td></tr>';return}for(const group of groups){const roles=[];if(group.current)roles.push(chip("默认","ok"));if(group.activeRequests)roles.push(chip("请求中","warn"));if(group.sessions||group.responseAliases)roles.push(chip("亲和",""));let retention="-",tone="";if(group.keyId!=null){if(group.reclaimable){retention="等待 LRU 回收";tone="warn"}else if(group.activeRequests){retention="在飞保护";tone="ok"}else if(group.sessions||group.responseAliases){retention="会话保护";tone="ok"}else if(group.current){retention="默认组保护";tone="ok"}else if(group.idleMs<status.config.cacheIdleMs){retention="缓存宽限";tone=""}else{retention="池内保留";tone=""}}const row=document.createElement("tr");row.innerHTML='<td><span class="group-name">'+esc(group.code||("#"+group.groupId))+'</span><span class="subtle"> #'+group.groupId+'</span></td><td class="num">'+(group.rate==null?"-":esc(group.rate)+"x")+'</td><td><div class="chips">'+(roles.join("")||'<span class="subtle">-</span>')+'</div></td><td>'+(group.keyId==null?"-":"#"+group.keyId)+'</td><td class="num">'+group.sessions+'</td><td class="num">'+group.responseAliases+'</td><td class="num">'+group.activeRequests+'</td><td>'+fmtDuration(group.idleMs)+'</td><td>'+chip(retention,tone)+'</td>';body.appendChild(row)}}
+function renderCandidates(status){const body=$("#candTable tbody");body.innerHTML="";let rank=0;const usageByGroup=new Map((status.groups||[]).map(group=>[group.groupId,group]));const candidates=status.candidates||[];$("#candidateMeta").textContent=candidates.filter(candidate=>!candidate.excluded).length+" 个可路由 · "+candidates.filter(candidate=>candidate.excluded).length+" 个已排除";if(!candidates.length){body.innerHTML='<tr><td colspan="9" class="empty">尚无统计数据</td></tr>';return}for(const candidate of candidates){const current=candidate.groupId===status.currentGroupId;const usage=usageByGroup.get(candidate.groupId);const tags=[];if(current)tags.push(chip("默认","ok"));if(!current&&usage){if(usage.activeRequests||usage.sessions||usage.responseAliases)tags.push(chip("使用中",""));else if(usage.keyId!=null)tags.push(chip("Key 池",""))}if(candidate.excluded)tags.push(chip(reasonName[candidate.excludeReason]||candidate.excludeReason||"已排除","warn"));else tags.push(chip("可路由","ok"));const row=document.createElement("tr");row.innerHTML='<td class="num">'+(candidate.excluded?"-":++rank)+'</td><td><span class="group-name">'+esc(candidate.code)+'</span><span class="subtle"> #'+candidate.groupId+'</span></td><td class="num">'+esc(candidate.rate)+'x</td><td class="num">'+(candidate.ttft==null?"-":candidate.ttft+" ms")+'</td><td class="num">'+(candidate.conservative==null?"-":candidate.conservative+" ms")+'</td><td class="num">'+(candidate.confidence==null?"-":Math.round(candidate.confidence*100)+"%")+'</td><td class="num">'+fmtScore(candidate.score)+'</td><td><div class="chips">'+tags.join("")+'</div></td><td><input type="checkbox" aria-label="切换分组 '+candidate.groupId+' 黑名单" data-gid="'+candidate.groupId+'" '+(status.config.blacklist.includes(candidate.groupId)?"checked":"")+'></td>';body.appendChild(row)}body.querySelectorAll("input[type=checkbox]").forEach(box=>box.addEventListener("change",event=>action(event.target,async()=>{const groupId=Number(event.target.dataset.gid);const blacklist=new Set(lastStatus.config.blacklist);event.target.checked?blacklist.add(groupId):blacklist.delete(groupId);await api("/ctl/config",{method:"POST",body:JSON.stringify({blacklist:[...blacklist]})});toast("黑名单已更新");await refresh(true)})))}
+function render(status){lastStatus=status;const poolSize=Object.keys(status.pool||{}).length;const active=status.traffic.activeStreams||0;$("#curGroup").textContent=status.currentGroupId==null?"未路由":"#"+status.currentGroupId;$("#curGroupSub").textContent=status.currentCode||"等待首次决策";$("#curMode").textContent=modeName[status.config.mode]||status.config.mode;const eligible=(status.candidates||[]).filter(candidate=>!candidate.excluded);const minRate=eligible.length?Math.min(...eligible.map(candidate=>candidate.rate)):null;$("#modeTier").textContent=status.config.mode==="economy"&&minRate!=null?"最低有效倍率 "+minRate+"x":"倍率 "+status.config.priceBand.min+"x 至 "+status.config.priceBand.max+"x";$("#keyPool").textContent=status.config.keyMode==="pool"?poolSize+" / "+status.config.poolMaxGroups:"单 Key";$("#keyPoolSub").textContent=status.affinity.sessions+" 会话 · "+status.affinity.responseAliases+" Responses 分支";$("#reqCount").textContent=String(status.traffic.requestsLast5m);$("#trafficSub").textContent=active+" 个在飞请求";$("#dataState").className="chip "+(status.stale?"warn":"ok");$("#dataState").textContent=status.stale?"统计缓存":"统计新鲜";$("#authState").innerHTML=status.needsReauth?chip("Token 已失效","err"):status.hasToken?chip("已登录","ok"):chip("未登录","warn");$("#policyState").textContent=status.config.mode==="economy"?"最低价层优先":"加权评分";$("#mode").value=status.config.mode;if(document.activeElement!==$("#priceMin"))$("#priceMin").value=status.config.priceBand.min;if(document.activeElement!==$("#priceMax"))$("#priceMax").value=status.config.priceBand.max;renderUsage(status);renderCandidates(status)}
+async function refresh(notify){try{const status=await api("/ctl/status");render(status);if(notify)toast("状态已刷新")}catch(error){$("#dataState").className="chip err";$("#dataState").textContent="状态异常";toast("状态获取失败: "+(error instanceof Error?error.message:String(error)))}}
+$("#refresh").addEventListener("click",event=>action(event.currentTarget,()=>refresh(true)));
+$("#saveCfg").addEventListener("click",event=>action(event.currentTarget,async()=>{const min=Number($("#priceMin").value),max=Number($("#priceMax").value);if(!Number.isFinite(min)||!Number.isFinite(max)||min<0||max<min)throw new Error("倍率区间无效");await api("/ctl/config",{method:"POST",body:JSON.stringify({mode:$("#mode").value,priceBand:{min,max}})});toast("策略已保存");await refresh()}));
+$("#routeOnce").addEventListener("click",event=>action(event.currentTarget,async()=>{const result=await api("/ctl/route-once",{method:"POST",body:JSON.stringify({dryRun:false})});$("#lastDecision").textContent="决策: "+result.reason+(result.targetGroupId!=null?" → #"+result.targetGroupId:"")+" · 优势 "+fmtScore(result.advantage)+" / 门槛 "+fmtScore(result.effectiveThreshold);toast(result.executed?"已切换到 #"+result.targetGroupId:"保持当前分组");await refresh()}));
+$("#dryRun").addEventListener("click",event=>action(event.currentTarget,async()=>{const result=await api("/ctl/route-once",{method:"POST",body:JSON.stringify({dryRun:true})});$("#lastDecision").textContent="模拟: "+result.reason+(result.targetGroupId!=null?" → #"+result.targetGroupId:"")+" · 优势 "+fmtScore(result.advantage)+" / 门槛 "+fmtScore(result.effectiveThreshold)+" · 未执行";toast("模拟完成")}));
+$("#login").addEventListener("click",event=>action(event.currentTarget,async()=>{await api("/ctl/login",{method:"POST",body:JSON.stringify({email:$("#email").value,password:$("#password").value})});$("#password").value="";toast("登录成功");await refresh()}));
+$("#saveToken").addEventListener("click",event=>action(event.currentTarget,async()=>{await api("/ctl/login",{method:"POST",body:JSON.stringify({token:$("#token").value})});$("#token").value="";toast("Token 已保存");await refresh()}));
+refresh();setInterval(()=>{if(document.visibilityState==="visible")refresh()},5000);
 </script>
 </body>
 </html>`;
