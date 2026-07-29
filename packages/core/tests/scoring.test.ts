@@ -44,58 +44,31 @@ describe("硬过滤", () => {
 		expect(ev.excluded[0]?.excludeReason).toBe("blacklisted");
 	});
 
-	test("过期样本排除(>15min),未来偏差>1min 排除", () => {
+	test("上游样本时间和数量不参与排除", () => {
 		const ev = evaluate(
 			[
 				stat({
 					groupId: 1,
-					lastSampleAt: new Date(NOW - 16 * 60_000).toISOString(),
+					sampleCount: 0,
+					lastSampleAt: new Date(NOW - 24 * 60 * 60_000).toISOString(),
 				}),
 				stat({
 					groupId: 2,
+					sampleCount: 1,
 					lastSampleAt: new Date(NOW + 2 * 60_000).toISOString(),
 				}),
-				stat({
-					groupId: 3,
-					lastSampleAt: new Date(NOW + 30_000).toISOString(),
-				}),
+				stat({ groupId: 3, sampleCount: 0, lastSampleAt: "invalid" }),
 			],
 			opts(),
 		);
-		expect(ev.eligible.map((c) => c.stat.groupId)).toEqual([3]);
-		expect(ev.excluded.map((e) => e.excludeReason).sort()).toEqual([
-			"future_sample",
-			"stale_sample",
-		]);
+		expect(ev.eligible.map((c) => c.stat.groupId)).toEqual([1, 2, 3]);
+		expect(ev.excluded).toHaveLength(0);
 	});
 
-	test("无样本/非法延迟排除", () => {
-		const ev = evaluate(
-			[
-				stat({ groupId: 1, sampleCount: 0 }),
-				stat({ groupId: 2, avgTtftMs: 0 }),
-			],
-			opts(),
-		);
+	test("上下游延迟都无效才排除", () => {
+		const ev = evaluate([stat({ groupId: 2, avgTtftMs: 0 })], opts());
 		expect(ev.eligible).toHaveLength(0);
-		expect(ev.excluded.map((e) => e.excludeReason).sort()).toEqual([
-			"invalid_latency",
-			"no_samples",
-		]);
-	});
-
-	test("低置信度排除:样本极少且很旧", () => {
-		const ev = evaluate(
-			[
-				stat({
-					groupId: 1,
-					sampleCount: 1,
-					lastSampleAt: new Date(NOW - 14 * 60_000).toISOString(),
-				}),
-			],
-			opts(),
-		);
-		expect(ev.excluded[0]?.excludeReason).toBe("low_confidence");
+		expect(ev.excluded[0]?.excludeReason).toBe("invalid_latency");
 	});
 
 	test("本地错误率超阈直接淘汰", () => {
@@ -201,8 +174,8 @@ describe("评分与模式", () => {
 		expect(ev.eligible[0]?.blendedTtftMs).toBeCloseTo(1000, 0);
 	});
 
-	test("本地融合:更新的本地观测主导旧公开先验", () => {
-		const obs = new Map<number, LocalObservation>([
+	test("本地可信且更快才覆盖上游,本地更慢时坚持上游", () => {
+		const faster = new Map<number, LocalObservation>([
 			[
 				1,
 				{
@@ -215,17 +188,33 @@ describe("评分与模式", () => {
 				},
 			],
 		]);
-		const ev = evaluate([stat({ groupId: 1, avgTtftMs: 3000 })], opts(), obs);
-		expect(ev.eligible[0]?.blendedTtftMs).toBeGreaterThan(1000);
-		expect(ev.eligible[0]?.blendedTtftMs).toBeLessThan(2000);
+		const local = evaluate(
+			[stat({ groupId: 1, avgTtftMs: 3000 })],
+			opts(),
+			faster,
+		);
+		expect(local.eligible[0]?.blendedTtftMs).toBe(1000);
+
+		faster.get(1)!.ewmaTtftMs = 5000;
+		const upstream = evaluate(
+			[stat({ groupId: 1, avgTtftMs: 3000 })],
+			opts(),
+			faster,
+		);
+		expect(upstream.eligible[0]?.blendedTtftMs).toBe(3000);
 	});
 
-	test("保守延迟:低置信度放大延迟", () => {
-		const freshStat = stat({ groupId: 1, avgTtftMs: 1000, sampleCount: 100 });
-		const ev = evaluate([freshStat], opts());
-		const c = ev.eligible[0]!;
-		expect(c.conservativeLatencyMs).toBeGreaterThan(c.blendedTtftMs);
-		expect(c.conservativeLatencyMs).toBeLessThan(c.blendedTtftMs * 2);
+	test("有效上游 TTFT 不因样本时间或数量降权", () => {
+		const upstream = stat({
+			groupId: 1,
+			avgTtftMs: 1000,
+			sampleCount: 0,
+			lastSampleAt: "invalid",
+		});
+		const candidate = evaluate([upstream], opts()).eligible[0]!;
+		expect(candidate.blendedTtftMs).toBe(1000);
+		expect(candidate.conservativeLatencyMs).toBe(1000);
+		expect(candidate.publicConfidence).toBe(1);
 	});
 });
 

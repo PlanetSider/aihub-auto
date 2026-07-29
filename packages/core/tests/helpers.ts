@@ -1,5 +1,5 @@
 import type { GroupStat, ScoringOptions } from "../src/index.ts";
-import { DEFAULT_ERROR_RATE_CAP, DEFAULT_MAX_STATUS_AGE_MS, DEFAULT_PRICE_BAND } from "../src/index.ts";
+import { DEFAULT_ERROR_RATE_CAP, DEFAULT_PRICE_BAND } from "../src/index.ts";
 
 export const NOW = Date.parse("2026-07-26T14:11:00Z");
 
@@ -20,7 +20,6 @@ export function opts(partial?: Partial<ScoringOptions>): ScoringOptions {
     mode: "balanced",
     priceBand: { ...DEFAULT_PRICE_BAND },
     blacklist: [],
-    maxStatusAgeMs: DEFAULT_MAX_STATUS_AGE_MS,
     errorRateCap: DEFAULT_ERROR_RATE_CAP,
     platform: "openai",
     now: NOW,

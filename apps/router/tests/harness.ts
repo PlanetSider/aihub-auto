@@ -90,8 +90,11 @@ export function createHarness(opts?: {
 		singleKeyId: config.singleKeyId,
 		poolMaxGroups: config.poolMaxGroups,
 		evictionGraceMs: config.decision.cacheIdleMs,
-		protectedGroupIds: () =>
-			new Set([...affinity.protectedGroupIds(), ...traffic.activeGroupIds()]),
+		hardProtectedGroupIds: () => traffic.activeGroupIds(),
+		softProtectedGroupIds: () => affinity.protectedGroupIds(),
+		onPoolKeyRemoved: (groupId) => {
+			affinity.forgetGroup(groupId);
+		},
 		persistState,
 		persistCredentials,
 		reauth: async () => {

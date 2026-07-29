@@ -121,6 +121,45 @@ describe("反代基础", () => {
 		expect(h.traffic.snapshot().activeStreams).toBe(0);
 	});
 
+	test("客户端取消后继续 pull 不得抛出 Controller is already closed", async () => {
+		h = await setupRouted();
+		const gate = Promise.withResolvers<void>();
+		let upstreamCancel = 0;
+		h.proxyDeps.fetch = Object.assign(
+			async () =>
+				new Response(
+					new ReadableStream<Uint8Array>({
+						async start(controller) {
+							controller.enqueue(new TextEncoder().encode("chunk-1"));
+							await gate.promise;
+							try {
+								controller.enqueue(new TextEncoder().encode("chunk-2"));
+								controller.close();
+							} catch {
+								// 上游在客户端取消后关闭是预期竞态。
+							}
+						},
+						cancel() {
+							upstreamCancel += 1;
+						},
+					}),
+					{ status: 200 },
+				),
+			{ preconnect() {} },
+		);
+		const response = await handleProxy(proxyReq(), h.proxyDeps);
+		const reader = response.body!.getReader();
+		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+			"chunk-1",
+		);
+		const cancelPromise = reader.cancel("client gone");
+		gate.resolve();
+		await cancelPromise;
+		await Bun.sleep(20);
+		expect(upstreamCancel).toBeGreaterThan(0);
+		expect(h.traffic.snapshot().activeStreams).toBe(0);
+	});
+
 	test("真实 cached_tokens 更新会话缓存证据", async () => {
 		h = await setupRouted();
 		h.mock.behavior.groups.set(1, { cachedTokens: 80, inputTokens: 100 });

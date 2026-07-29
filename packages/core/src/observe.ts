@@ -1,16 +1,23 @@
 import {
 	LOCAL_CONFIDENCE_HALF_LIFE_MS,
 	LOCAL_EWMA_ALPHA,
+	LOCAL_OUTCOME_MAX_SAMPLES,
+	LOCAL_OUTCOME_WINDOW_MS,
 	LOCAL_WINDOW_SIZE,
 } from "./defaults.ts";
 import type { LocalObservation } from "./types.ts";
+
+interface Outcome {
+	ok: boolean;
+	at: number;
+}
 
 interface GroupObs {
 	ewmaTtftMs?: number;
 	peakEwmaTtftMs?: number;
 	peakUpdatedAt?: number;
 	ttfts: number[];
-	outcomes: boolean[];
+	outcomes: Outcome[];
 	sampleCount: number;
 	lastAt: number;
 	latencyLastAt?: number;
@@ -23,7 +30,8 @@ interface SerializedObs {
 	peakEwmaTtftMs?: number;
 	peakUpdatedAt?: number;
 	ttfts?: number[];
-	outcomes?: boolean[];
+	/** v0.2.1+:带时间戳的近 3 小时结果;旧版 boolean 数组仍可恢复。 */
+	outcomes?: Array<boolean | Outcome>;
 	/** 旧版兼容 */
 	ring?: { ok: boolean; ttftMs?: number }[];
 	sampleCount: number;
@@ -42,14 +50,21 @@ export class LocalObservationStore {
 	private readonly windowSize: number;
 	private readonly halfLifeMs: number;
 
+	private readonly outcomeWindowMs: number;
+	private readonly outcomeMaxSamples: number;
+
 	constructor(opts?: {
 		alpha?: number;
 		windowSize?: number;
 		halfLifeMs?: number;
+		outcomeWindowMs?: number;
+		outcomeMaxSamples?: number;
 	}) {
 		this.alpha = opts?.alpha ?? LOCAL_EWMA_ALPHA;
 		this.windowSize = opts?.windowSize ?? LOCAL_WINDOW_SIZE;
 		this.halfLifeMs = opts?.halfLifeMs ?? LOCAL_CONFIDENCE_HALF_LIFE_MS;
+		this.outcomeWindowMs = opts?.outcomeWindowMs ?? LOCAL_OUTCOME_WINDOW_MS;
+		this.outcomeMaxSamples = opts?.outcomeMaxSamples ?? LOCAL_OUTCOME_MAX_SAMPLES;
 	}
 
 	private group(groupId: number): GroupObs {
@@ -59,6 +74,13 @@ export class LocalObservationStore {
 			this.groups.set(groupId, group);
 		}
 		return group;
+	}
+
+	private pruneOutcomes(group: GroupObs, now: number): void {
+		const cutoff = now - this.outcomeWindowMs;
+		group.outcomes = group.outcomes
+			.filter((outcome) => outcome.at >= cutoff && outcome.at <= now)
+			.slice(-this.outcomeMaxSamples);
 	}
 
 	/** 首个响应字节到达时调用,不提前把整次请求判为成功。 */
@@ -91,8 +113,8 @@ export class LocalObservationStore {
 			this.recordLatency(groupId, ttftMs, now);
 		}
 		const group = this.group(groupId);
-		group.outcomes.push(true);
-		if (group.outcomes.length > this.windowSize) group.outcomes.shift();
+		group.outcomes.push({ ok: true, at: now });
+		this.pruneOutcomes(group, now);
 		group.sampleCount++;
 		group.outcomeLastAt = now;
 		group.lastAt = now;
@@ -100,8 +122,8 @@ export class LocalObservationStore {
 
 	recordFailure(groupId: number, now = Date.now()): void {
 		const group = this.group(groupId);
-		group.outcomes.push(false);
-		if (group.outcomes.length > this.windowSize) group.outcomes.shift();
+		group.outcomes.push({ ok: false, at: now });
+		this.pruneOutcomes(group, now);
 		group.sampleCount++;
 		group.outcomeLastAt = now;
 		group.lastAt = now;
@@ -112,12 +134,15 @@ export class LocalObservationStore {
 		now = Date.now(),
 	): LocalObservation | undefined {
 		const group = this.groups.get(groupId);
-		if (!group || (group.outcomes.length === 0 && group.ttfts.length === 0))
+		if (!group) return undefined;
+		this.pruneOutcomes(group, now);
+		if (group.outcomes.length === 0 && group.ttfts.length === 0)
 			return undefined;
 
-		const failures = group.outcomes.filter((ok) => !ok).length;
+		const failures = group.outcomes.filter((outcome) => !outcome.ok).length;
 		const errorRate =
 			group.outcomes.length > 0 ? failures / group.outcomes.length : 0;
+		const successRate = group.outcomes.length > 0 ? 1 - errorRate : 1;
 		const sorted = [...group.ttfts].sort((a, b) => a - b);
 		const p90TtftMs =
 			sorted.length > 0
@@ -165,6 +190,7 @@ export class LocalObservationStore {
 					: Math.max(decayedPeak, group.ewmaTtftMs ?? 0),
 			p90TtftMs,
 			errorRate,
+			successRate,
 			cv,
 			sampleCount: group.sampleCount,
 			recentSamples: group.outcomes.length,
@@ -187,24 +213,33 @@ export class LocalObservationStore {
 		return out;
 	}
 
-	toJSON(): SerializedObs[] {
-		return [...this.groups.entries()].map(([groupId, group]) => ({
-			groupId,
-			ewmaTtftMs: group.ewmaTtftMs,
-			peakEwmaTtftMs: group.peakEwmaTtftMs,
-			peakUpdatedAt: group.peakUpdatedAt,
-			ttfts: group.ttfts,
-			outcomes: group.outcomes,
-			sampleCount: group.sampleCount,
-			lastAt: group.lastAt,
-			latencyLastAt: group.latencyLastAt,
-			outcomeLastAt: group.outcomeLastAt,
-		}));
+	toJSON(now = Date.now()): SerializedObs[] {
+		return [...this.groups.entries()].map(([groupId, group]) => {
+			this.pruneOutcomes(group, now);
+			return {
+				groupId,
+				ewmaTtftMs: group.ewmaTtftMs,
+				peakEwmaTtftMs: group.peakEwmaTtftMs,
+				peakUpdatedAt: group.peakUpdatedAt,
+				ttfts: group.ttfts,
+				outcomes: group.outcomes,
+				sampleCount: group.sampleCount,
+				lastAt: group.lastAt,
+				latencyLastAt: group.latencyLastAt,
+				outcomeLastAt: group.outcomeLastAt,
+			};
+		});
 	}
 
 	static fromJSON(
 		data: unknown,
-		opts?: { alpha?: number; windowSize?: number; halfLifeMs?: number },
+		opts?: {
+			alpha?: number;
+			windowSize?: number;
+			halfLifeMs?: number;
+			outcomeWindowMs?: number;
+			outcomeMaxSamples?: number;
+		},
 	): LocalObservationStore {
 		const store = new LocalObservationStore(opts);
 		if (!Array.isArray(data)) return store;
@@ -235,10 +270,23 @@ export class LocalObservationStore {
 							(value): value is number => Number.isFinite(value) && value > 0,
 						)
 					: [];
+				const legacyOutcomeAt =
+					typeof serialized.outcomeLastAt === "number"
+						? serialized.outcomeLastAt
+						: typeof serialized.lastAt === "number"
+							? serialized.lastAt
+							: 0;
 				group.outcomes = Array.isArray(serialized.outcomes)
-					? serialized.outcomes.filter(
-							(value): value is boolean => typeof value === "boolean",
-						)
+					? serialized.outcomes.flatMap((value): Outcome[] => {
+							if (typeof value === "boolean")
+								return [{ ok: value, at: legacyOutcomeAt }];
+							if (typeof value !== "object" || value === null) return [];
+							const outcome = value as Partial<Outcome>;
+							return typeof outcome.ok === "boolean" &&
+								Number.isFinite(outcome.at)
+								? [{ ok: outcome.ok, at: outcome.at! }]
+								: [];
+						})
 					: [];
 			} else if (Array.isArray(serialized.ring)) {
 				const ring = serialized.ring.filter(
@@ -247,7 +295,15 @@ export class LocalObservationStore {
 						entry !== null &&
 						typeof entry.ok === "boolean",
 				);
-				group.outcomes = ring.map((entry) => entry.ok);
+				group.outcomes = ring.map((entry) => ({
+					ok: entry.ok,
+						at:
+							typeof serialized.outcomeLastAt === "number"
+								? serialized.outcomeLastAt
+								: typeof serialized.lastAt === "number"
+									? serialized.lastAt
+									: 0,
+				}));
 				group.ttfts = ring
 					.map((entry) => entry.ttftMs)
 					.filter(
@@ -256,7 +312,8 @@ export class LocalObservationStore {
 			}
 
 			group.ttfts = group.ttfts.slice(-store.windowSize);
-			group.outcomes = group.outcomes.slice(-store.windowSize);
+			group.outcomes.sort((left, right) => left.at - right.at);
+			store.pruneOutcomes(group, Date.now());
 			group.sampleCount =
 				typeof serialized.sampleCount === "number"
 					? serialized.sampleCount
@@ -272,9 +329,7 @@ export class LocalObservationStore {
 			group.outcomeLastAt =
 				typeof serialized.outcomeLastAt === "number"
 					? serialized.outcomeLastAt
-					: group.outcomes.length > 0
-						? group.lastAt
-						: undefined;
+					: group.outcomes.at(-1)?.at;
 		}
 		return store;
 	}

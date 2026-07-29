@@ -27,7 +27,12 @@ export interface ExecutorDeps {
 	singleKeyId?: number;
 	poolMaxGroups: number;
 	evictionGraceMs?: number;
-	protectedGroupIds?: () => ReadonlySet<number>;
+	/** 当前请求、预留与正在创建之外的硬保护组。 */
+	hardProtectedGroupIds?: () => ReadonlySet<number>;
+	/** 会话/Responses 亲和软保护;硬无效组可越过它回收。 */
+	softProtectedGroupIds?: () => ReadonlySet<number>;
+	/** 远端托管 Key 删除成功后同步清掉相关亲和记录。 */
+	onPoolKeyRemoved?: (groupId: number) => void;
 	persistState: () => Promise<void>;
 	persistCredentials: () => Promise<void>;
 	/** 401 时由 daemon 注入的续期回调;成功返回 true */
@@ -201,47 +206,63 @@ export class RouteExecutor {
 		return { sk: credentials.singleKeySk!, groupId };
 	}
 
-	/** 定期收缩超限池;删除成功后立即持久化,重启仍复用其余 Key。 */
-	async trimPool(): Promise<number> {
+	/** 定期收缩池;强无效组可越过会话软保护,删除成功后立即持久化。 */
+	async trimPool(forceReclaimGroupIds: ReadonlySet<number> = new Set()): Promise<number> {
 		if (this.deps.keyMode !== "pool") return 0;
 		return this.serializePool(async () => {
-			const removed = await this.evictLru();
+			const removed = await this.evictLru(undefined, forceReclaimGroupIds);
 			if (removed > 0) await this.deps.persistState();
 			return removed;
 		});
 	}
 
-	/** 超限时只删除已过宽限期、无会话绑定且无在飞请求的最旧 Key。 */
-	private async evictLru(protectGroupId?: number): Promise<number> {
+	/** 超容量按 LRU 收缩;强无效组过宽限期后即使有旧亲和也可回收。 */
+	private async evictLru(
+		protectGroupId?: number,
+		forceReclaimGroupIds: ReadonlySet<number> = new Set(),
+	): Promise<number> {
 		const { state, logger } = this.deps;
-		if (Object.keys(state.pool).length <= this.deps.poolMaxGroups) return 0;
-		const isProtected = (groupId: number): boolean =>
+		const isHardProtected = (groupId: number): boolean =>
 			(protectGroupId !== undefined && groupId === protectGroupId) ||
 			groupId === state.currentGroupId ||
+			this.creating.has(groupId) ||
 			this.reservations.has(groupId) ||
-			(this.deps.protectedGroupIds?.().has(groupId) ?? false);
+			(this.deps.hardProtectedGroupIds?.().has(groupId) ?? false);
+		const isSoftProtected = (groupId: number): boolean =>
+			this.deps.softProtectedGroupIds?.().has(groupId) ?? false;
 		const grace = this.deps.evictionGraceMs ?? 0;
 		const now = Date.now();
 		let removed = 0;
 		const victims = Object.entries(state.pool)
-			.filter(
-				([groupId, entry]) =>
-					!isProtected(Number(groupId)) && now - entry.lastUsedAt >= grace,
-			)
+			.filter(([groupId, entry]) => {
+				const id = Number(groupId);
+				const forced = forceReclaimGroupIds.has(id);
+				return (
+					!isHardProtected(id) &&
+					now - entry.lastUsedAt >= grace &&
+					(forced ||
+						(Object.keys(state.pool).length > this.deps.poolMaxGroups &&
+							!isSoftProtected(id)))
+				);
+			})
 			.sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt);
 
-		while (
-			Object.keys(state.pool).length > this.deps.poolMaxGroups &&
-			victims.length > 0
-		) {
+		while (victims.length > 0) {
 			const [groupId, entry] = victims.shift()!;
-			// 快照之后可能有新请求取得 reservation;删除前必须重新确认。
-			if (isProtected(Number(groupId))) continue;
+			const id = Number(groupId);
+			const forced = forceReclaimGroupIds.has(id);
+			if (!forced && Object.keys(state.pool).length <= this.deps.poolMaxGroups)
+				break;
+			// 快照之后可能出现创建/预留/在飞请求;删除前必须重新确认。
+			if (isHardProtected(id) || (!forced && isSoftProtected(id))) continue;
 			try {
 				await this.withAuth(() => this.deps.client.deleteKey(entry.keyId));
 				delete state.pool[groupId];
+				this.deps.onPoolKeyRemoved?.(id);
 				removed++;
-				logger.info(`池 LRU 删除:group=${groupId} keyId=${entry.keyId}`);
+				logger.info(
+					`${forced ? "池强制回收" : "池 LRU 删除"}:group=${groupId} keyId=${entry.keyId}`,
+				);
 			} catch (err) {
 				logger.warn(
 					`池删除失败(保留记录,下轮重试):keyId=${entry.keyId} ${err instanceof Error ? err.message : ""}`,

@@ -69,6 +69,39 @@ describe("守护循环", () => {
 		const excludedIds = round.evaluation.excluded.map((e) => e.stat.groupId);
 		expect(excludedIds).toContain(1);
 	});
+
+	test("超出价格区间的闲置池组会在守护轮回收并清理亲和", async () => {
+		h = createHarness({
+			configPatch: {
+				keyMode: "pool",
+				priceBand: { min: 0, max: 0.05 },
+				decision: {
+					stickiness: 0.1,
+					cachePenaltyMax: 0.25,
+					cacheIdleMs: 0,
+					minDwellMs: 0,
+				},
+			},
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.02 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.2 }),
+		];
+		await h.executor.ensureKey(1);
+		await h.executor.ensureKey(2);
+		h.affinity.bind("stale-session", 2);
+		h.affinity.bindResponse("resp_stale", "stale-session", 2);
+		h.state.pool["2"]!.lastUsedAt = 0;
+
+		const round = await h.daemon.runOnce();
+		expect(
+			round.evaluation.excluded.find((candidate) => candidate.stat.groupId === 2)
+				?.excludeReason,
+		).toBe("price_band");
+		expect(h.state.pool["2"]).toBeUndefined();
+		expect(h.affinity.resolve("stale-session")).toBeUndefined();
+		expect(h.affinity.resolveResponse("resp_stale")).toBeUndefined();
+	});
 });
 
 describe("省钱优先", () => {
@@ -167,7 +200,9 @@ describe("缓存感知端到端", () => {
 			makeStat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 1000 }),
 			makeStat({ groupId: 2, rateMultiplier: 0.12, avgTtftMs: 6000 }),
 		];
-		await (await handleProxy(proxyReq(), h.proxyDeps)).text();
+		// 只制造缓存/流量热度,不写入组 2 的本地 TTFT,否则会改变本用例的公开延迟前提。
+		h.traffic.begin();
+		h.traffic.end();
 		const round = await h.daemon.runOnce();
 		expect(round.decision.shouldSwitch).toBe(true);
 		expect(h.state.currentGroupId).toBe(1);
@@ -211,6 +246,7 @@ describe("控制台 API", () => {
 			makeStat({ groupId: 1, rateMultiplier: 0.03, avgTtftMs: 1500 }),
 			makeStat({ groupId: 2, rateMultiplier: 0.2, avgTtftMs: 900 }), // 出价格区间 ⇒ excluded
 		];
+		h.observations.recordSuccess(1, 1_000);
 		const base = h.serverUrl!;
 
 		// route-once
@@ -240,6 +276,8 @@ describe("控制台 API", () => {
 				groupId: number;
 				excluded: boolean;
 				excludeReason?: string;
+				successRate?: number;
+				outcomeSamples?: number;
 			}[];
 			pool: Record<string, { keyId: number; lastUsedAt: number }>;
 			affinity: { sessions: number; responseAliases: number };
@@ -264,6 +302,9 @@ describe("控制台 API", () => {
 		});
 		h.traffic.end(1);
 		expect(status.hasToken).toBe(true);
+		const eligible = status.candidates.find((c) => c.groupId === 1);
+		expect(eligible?.successRate).toBe(1);
+		expect(eligible?.outcomeSamples).toBe(1);
 		const excluded = status.candidates.find((c) => c.groupId === 2);
 		expect(excluded?.excluded).toBe(true);
 		expect(excluded?.excludeReason).toBe("price_band");

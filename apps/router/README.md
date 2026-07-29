@@ -29,7 +29,7 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 
 ## Key 模式
 
-- **pool(默认)**:按需为每个使用中的组创建 `aihub-auto-g{组id}` Key。新会话用 P2C + Peak EWMA 在近优候选中分配,已有会话保持组亲和;同组并发创建只发一次请求。启动对账和每轮守护都会执行 LRU,仅删除超过缓存宽限期且无绑定会话/Responses 分支/在飞请求的 Key,所以 `poolMaxGroups` 是安全软上限。**绝不触碰手动创建的 Key**
+- **pool(默认)**:按需为每个使用中的组创建 `aihub-auto-g{组id}` Key。新会话用 P2C + Peak EWMA 在近优候选中分配,已有会话保持组亲和;同组并发创建只发一次请求。普通 LRU 只收缩超出 `poolMaxGroups` 的闲置 Key;但超倍率、黑名单、账号不可用、延迟无效、近 3 小时稳定率过低或已不在最新统计中的闲置组会在缓存宽限期后强制回收,并清理其会话/Responses 亲和。当前组、创建中、预留中、在飞组始终受保护。**绝不触碰手动创建的 Key**
 - **single(兼容)**:使用现有的一把 Key,切组 = `PUT /api/v1/keys/{id}`。上游单 Key 的全局切组语义无法隔离并发会话,仅供账号不能自动创建 Key 时使用。
 
 ## 为什么比 AIHubRouter 好
@@ -67,6 +67,6 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 ## 安全边界
 
 - 默认仅监听 127.0.0.1,凭据仅存本机(POSIX 下 0600),日志脱敏;`/ctl/status` 只返回 Key 元数据,不返回 `sk`
-- 配置目录内 `app.log` 默认记录运行日志(5 MiB × 当前+3 个历史),`crash.log` 记录生命周期和未处理异常(1 MiB × 当前+3 个历史)
+- 配置目录内 `app.log` 默认记录运行日志(5 MiB × 当前+3 个历史),`crash.log` 记录生命周期和未处理异常(1 MiB × 当前+3 个历史)。直接双击 Windows EXE 使用 `%LocalAppData%\\aihub-auto`;通过 `AIHUB_AUTO_CONFIG_DIR` 可显式指定其他目录
 - 监听 `0.0.0.0` 时强制要求 `proxyToken` + `uiPassword`,否则拒绝启动(防止别人烧你的额度);客户端此时用 `OPENAI_API_KEY=<proxyToken>` 访问
 - 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用

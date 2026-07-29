@@ -1,7 +1,6 @@
 import {
 	DEFAULT_SCORE_WINDOW,
 	DEFAULT_TOPN_MAX,
-	FUTURE_SKEW_TOLERANCE_MS,
 	MIN_CONFIDENCE,
 	MODE_WEIGHTS,
 } from "./defaults.ts";
@@ -14,24 +13,6 @@ import type {
 	ScoredCandidate,
 	ScoringOptions,
 } from "./types.ts";
-
-const LN2 = Math.LN2;
-
-/** 公开统计置信度;它只作为会随延迟快速衰减的冷启动先验。 */
-export function computeConfidence(
-	ageMs: number,
-	sampleCount: number,
-	cv: number | undefined,
-	maxStatusAgeMs: number,
-): number {
-	const freshness = Math.exp(
-		(-LN2 * Math.max(ageMs, 0)) / (maxStatusAgeMs / 2),
-	);
-	const volume = 1 - Math.exp(-sampleCount / 20);
-	const stability =
-		cv !== undefined && Number.isFinite(cv) && cv >= 0 ? 1 / (1 + cv) : 1;
-	return freshness * volume * stability;
-}
 
 function exclude(
 	stat: GroupStat,
@@ -49,7 +30,7 @@ function clamp01(value: number): number {
 
 /**
  * 硬约束 + 本地优先融合 + 失败/尾延迟风险修正。
- * 公开样本过期时,只要本地仍有新鲜 TTFT,候选不会被延迟的公开数据误杀。
+ * 上游最新有效样本永不过期;高置信度且更快的本地 TTFT 才覆盖它。
  */
 export function evaluate(
 	stats: GroupStat[],
@@ -70,6 +51,7 @@ export function evaluate(
 		publicConfidence: number;
 		localConfidence: number;
 		localSampleCount: number;
+		successRate: number;
 		errorRate: number;
 		confidence: number;
 		blendedTtftMs: number;
@@ -106,6 +88,8 @@ export function evaluate(
 			observation?.recentSamples ?? observation?.sampleCount ?? 0;
 		const outcomeConfidence =
 			observation?.outcomeConfidence ?? observation?.confidence ?? 0;
+		const successRate = observation?.successRate ??
+			(observation ? 1 - observation.errorRate : 1);
 		if (
 			observation &&
 			outcomeConfidence >= MIN_CONFIDENCE &&
@@ -116,24 +100,9 @@ export function evaluate(
 			continue;
 		}
 
-		const sampleTime = Date.parse(stat.lastSampleAt);
-		const age = options.now - sampleTime;
-		const publicHasSamples =
-			Number.isFinite(stat.sampleCount) && stat.sampleCount > 0;
 		const publicLatencyValid =
 			Number.isFinite(stat.avgTtftMs) && stat.avgTtftMs > 0;
-		const publicTimeValid = Number.isFinite(sampleTime);
-		const publicNotFuture = publicTimeValid && age >= -FUTURE_SKEW_TOLERANCE_MS;
-		const publicFresh = publicNotFuture && age <= options.maxStatusAgeMs;
-		const publicUsable = publicHasSamples && publicLatencyValid && publicFresh;
-		const publicConfidence = publicUsable
-			? computeConfidence(
-					Math.max(age, 0),
-					stat.sampleCount,
-					undefined,
-					options.maxStatusAgeMs,
-				)
-			: 0;
+		const publicConfidence = publicLatencyValid ? 1 : 0;
 
 		const localLatencyConfidence =
 			observation?.latencyConfidence ?? observation?.confidence ?? 0;
@@ -143,19 +112,8 @@ export function evaluate(
 			observation.ewmaTtftMs > 0 &&
 			localLatencyConfidence >= MIN_CONFIDENCE;
 
-		if (!publicUsable && !localLatencyValid) {
-			const reason: ExcludedCandidate["excludeReason"] = !publicHasSamples
-				? "no_samples"
-				: !publicLatencyValid
-					? "invalid_latency"
-					: !publicTimeValid || age > options.maxStatusAgeMs
-						? "stale_sample"
-						: "future_sample";
-			excluded.push(exclude(stat, reason, rate));
-			continue;
-		}
-		if (publicConfidence < MIN_CONFIDENCE && !localLatencyValid) {
-			excluded.push(exclude(stat, "low_confidence", rate));
+		if (!publicLatencyValid && !localLatencyValid) {
+			excluded.push(exclude(stat, "invalid_latency", rate));
 			continue;
 		}
 
@@ -167,33 +125,11 @@ export function evaluate(
 				0.7 * observation!.ewmaTtftMs! +
 					0.3 * (observation!.p90TtftMs ?? observation!.ewmaTtftMs!))
 			: undefined;
-		// 时间戳仲裁:更新的一方主导,较旧的一方只作低权重先验。
-		const localIsNewer =
+		const useLocal =
 			localRiskLatency !== undefined &&
-			(!publicUsable ||
-				(observation!.latencyLastAt ?? observation!.lastAt) >= sampleTime);
-		const localWeight =
-			localRiskLatency === undefined
-				? 0
-				: localIsNewer
-					? localConfidence
-					: localConfidence * (1 - publicConfidence);
-		const publicWeight = !publicUsable
-			? 0
-			: localIsNewer
-				? publicConfidence * (1 - localConfidence)
-				: publicConfidence;
-		const totalWeight = localWeight + publicWeight;
-		const blendedTtftMs =
-			totalWeight > 0
-				? ((localRiskLatency ?? 0) * localWeight +
-						stat.avgTtftMs * publicWeight) /
-					totalWeight
-				: localRiskLatency!;
-
-		const confidence = localLatencyValid
-			? 1 - (1 - publicConfidence) * (1 - localConfidence)
-			: publicConfidence;
+			(!publicLatencyValid || localRiskLatency < stat.avgTtftMs);
+		const blendedTtftMs = useLocal ? localRiskLatency : stat.avgTtftMs;
+		const confidence = useLocal ? localConfidence : publicConfidence;
 		const errorRate = observation
 			? Math.min(0.95, observation.errorRate * clamp01(outcomeConfidence))
 			: 0;
@@ -207,6 +143,7 @@ export function evaluate(
 			publicConfidence,
 			localConfidence,
 			localSampleCount: recentSamples,
+			successRate,
 			errorRate,
 			confidence,
 			blendedTtftMs,
@@ -253,6 +190,8 @@ export function evaluate(
 			publicConfidence: candidate.publicConfidence,
 			localConfidence: candidate.localConfidence,
 			localSampleCount: candidate.localSampleCount,
+			outcomeSampleCount: candidate.localSampleCount,
+			successRate: candidate.successRate,
 			errorRate: candidate.errorRate,
 			confidence: candidate.confidence,
 			blendedTtftMs: candidate.blendedTtftMs,

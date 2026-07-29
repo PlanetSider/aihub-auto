@@ -154,7 +154,6 @@ export class RouteDaemon {
 				...extraBlacklist,
 			],
 			allowedGroupIds: this.allowedGroupIds,
-			maxStatusAgeMs: config.maxStatusAgeMs,
 			errorRateCap: config.errorRateCap,
 			platform,
 			now,
@@ -173,6 +172,36 @@ export class RouteDaemon {
 			this.deps.observations.asMap(now),
 			this.userRates,
 		);
+	}
+
+	/** 仅强无效原因可越过会话软保护;省钱层备用组始终保留。 */
+	private forceReclaimablePoolGroupIds(
+		items: readonly GroupStat[],
+		evaluation: Evaluation,
+		statsStale: boolean,
+	): Set<number> {
+		const forceReasons = new Set([
+			"platform_mismatch",
+			"unavailable_group",
+			"invalid_rate",
+			"price_band",
+			"blacklisted",
+			"invalid_latency",
+			"local_error_rate",
+		]);
+		const groupIds = new Set(
+			evaluation.excluded
+				.filter((candidate) => forceReasons.has(candidate.excludeReason))
+				.map((candidate) => candidate.stat.groupId),
+		);
+		// 拉取成功的最新统计中已不存在的历史组没有复用价值;拉取失败时不猜测。
+		if (!statsStale) {
+			const latestGroupIds = new Set(items.map((item) => item.groupId));
+			for (const groupId of Object.keys(this.deps.state.pool).map(Number)) {
+				if (!latestGroupIds.has(groupId)) groupIds.add(groupId);
+			}
+		}
+		return groupIds;
 	}
 
 	/** 公开统计轮:维护默认组并预热它的 Key;已绑定会话不会随之迁移。 */
@@ -223,7 +252,9 @@ export class RouteDaemon {
 			this.deps.state.breaker = this.deps.breaker.toJSON();
 			this.deps.state.observations = this.deps.observations.toJSON();
 			await this.deps.persistState();
-			await this.deps.executor.trimPool();
+			await this.deps.executor.trimPool(
+				this.forceReclaimablePoolGroupIds(items, evaluation, stale),
+			);
 		}
 
 		await this.deps.audit.append({
@@ -243,6 +274,8 @@ export class RouteDaemon {
 				ttft: Math.round(candidate.blendedTtftMs),
 				conservative: Math.round(candidate.conservativeLatencyMs),
 				confidence: Number(candidate.confidence.toFixed(3)),
+				successRate: Number(candidate.successRate.toFixed(3)),
+				outcomeSamples: candidate.outcomeSampleCount,
 				premium: Number.isFinite(candidate.premium)
 					? Number(candidate.premium.toFixed(3))
 					: "inf",

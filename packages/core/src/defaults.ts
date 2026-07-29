@@ -8,12 +8,6 @@ export const MODE_WEIGHTS: Record<RoutingMode, ModeWeights> = {
 
 export const DEFAULT_PRICE_BAND = { min: 0, max: 0.15 };
 
-/** 公开统计样本过期上限 */
-export const DEFAULT_MAX_STATUS_AGE_MS = 15 * 60_000;
-
-/** 未来时间容忍(时钟偏差) */
-export const FUTURE_SKEW_TOLERANCE_MS = 60_000;
-
 /** 置信度下限,低于淘汰 */
 export const MIN_CONFIDENCE = 0.2;
 
@@ -34,9 +28,12 @@ export const DEFAULT_DECISION_POLICY: DecisionPolicy = {
 
 /** 本地观测 EWMA 系数 */
 export const LOCAL_EWMA_ALPHA = 0.3;
-/** 本地观测结果环形缓冲大小(错误率/P90/CV 窗口) */
+/** 本地 TTFT 短窗口大小(P90/CV)。 */
 export const LOCAL_WINDOW_SIZE = 20;
-/** 本地置信度半衰期 */
+/** 稳定率使用最近 3 小时结果,并限制样本数避免高流量无限增长。 */
+export const LOCAL_OUTCOME_WINDOW_MS = 3 * 60 * 60_000;
+export const LOCAL_OUTCOME_MAX_SAMPLES = 500;
+/** 本地延迟置信度半衰期 */
 export const LOCAL_CONFIDENCE_HALF_LIFE_MS = 5 * 60_000;
 
 /** 熔断器默认参数 */

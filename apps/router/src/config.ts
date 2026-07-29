@@ -2,7 +2,6 @@ import { z } from "zod";
 import {
 	DEFAULT_DECISION_POLICY,
 	DEFAULT_ERROR_RATE_CAP,
-	DEFAULT_MAX_STATUS_AGE_MS,
 	DEFAULT_PRICE_BAND,
 } from "@aihub-auto/core";
 import { join } from "node:path";
@@ -40,11 +39,6 @@ export const ConfigSchema = z.object({
 	cleanupPoolOnExit: z.boolean().default(false),
 	pollIntervalMs: z.number().int().min(5_000).default(60_000),
 	samples: z.number().int().min(1).max(500).default(100),
-	maxStatusAgeMs: z
-		.number()
-		.int()
-		.min(60_000)
-		.default(DEFAULT_MAX_STATUS_AGE_MS),
 	errorRateCap: z.number().min(0).max(1).default(DEFAULT_ERROR_RATE_CAP),
 	decision: z
 		.object({

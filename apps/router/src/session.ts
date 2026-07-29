@@ -358,6 +358,24 @@ export class SessionAffinity {
 		this.pruneMaybe(now);
 	}
 
+	/** 托管 Key 被强制回收后,同步清除其主会话和 Responses 分支亲和。 */
+	forgetGroup(groupId: number): { sessions: number; aliases: number } {
+		let sessions = 0;
+		let aliases = 0;
+		for (const [key, binding] of Object.entries(this.state.sessions)) {
+			if (binding.groupId !== groupId) continue;
+			delete this.state.sessions[key];
+			sessions++;
+		}
+		for (const [key, alias] of Object.entries(this.state.responseAliases)) {
+			if (alias.groupId !== groupId) continue;
+			delete this.state.responseAliases[key];
+			aliases++;
+		}
+		if (sessions > 0 || aliases > 0) this.onChange();
+		return { sessions, aliases };
+	}
+
 	protectedGroupIds(now = Date.now()): Set<number> {
 		this.prune(now);
 		return new Set([

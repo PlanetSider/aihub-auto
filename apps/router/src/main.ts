@@ -27,23 +27,50 @@ async function main(): Promise<void> {
 	const state = await loadState(store);
 	const credentials = await loadCredentials(store);
 
-	const appLog = new RollingFileLog(join(dir, "app.log"));
+	const appLogPath = join(dir, "app.log");
+	const crashLogPath = join(dir, "crash.log");
+	const appLog = new RollingFileLog(appLogPath);
 	const logger = new Logger(config.logLevel, (line) => {
 		console.log(line);
 		appLog.write(line);
 	});
-	const crashLog = new CrashLog(join(dir, "crash.log"));
-	crashLog.record("start", `runtime=${process.version}`);
+	const crashLog = new CrashLog(crashLogPath);
+	// 启动即创建空文件,避免正式环境只剩控制台输出却找不到日志。
+	appLog.write(
+		`${new Date().toISOString()} [INFO] app.log ready dir=${dir} pid=${process.pid}`,
+	);
+	crashLog.record("start", {
+		runtime: process.version,
+		pid: process.pid,
+		configDir: dir,
+		appLog: appLogPath,
+		crashLog: crashLogPath,
+		exe: process.execPath,
+		cwd: process.cwd(),
+	});
+	const isControllerClosed = (reason: unknown): boolean =>
+		reason instanceof Error &&
+		/controller is already closed|invalid state/i.test(reason.message);
 	process.on("unhandledRejection", (reason) => {
-		crashLog.record("unhandled_rejection", reason);
-		logger.error(
-			`未处理 Promise:${reason instanceof Error ? reason.message : String(reason)}`,
-		);
+		const detail =
+			reason instanceof Error
+				? (reason.stack ?? reason.message)
+				: String(reason);
+		if (isControllerClosed(reason)) {
+			crashLog.record("stream_controller_closed", detail);
+			logger.warn(`流控制器竞态(已吞掉):${detail}`);
+			return;
+		}
+		crashLog.record("unhandled_rejection", detail);
+		logger.error(`未处理 Promise:${detail}`);
 	});
 	process.on("uncaughtException", (err) => {
-		crashLog.record("uncaught_exception", err);
-		logger.error(`未捕获异常:${err.message}`);
+		crashLog.record("uncaught_exception", err.stack ?? err.message);
+		logger.error(`未捕获异常:${err.stack ?? err.message}`);
 	});
+	process.on("beforeExit", (code) =>
+		crashLog.record("before_exit", `code=${code}`),
+	);
 	process.on("exit", (code) => crashLog.record("exit", `code=${code}`));
 	const audit = new AuditLog(
 		config.auditLog ? join(dir, "audit.jsonl") : undefined,
@@ -93,8 +120,11 @@ async function main(): Promise<void> {
 		singleKeyId: config.singleKeyId,
 		poolMaxGroups: config.poolMaxGroups,
 		evictionGraceMs: config.decision.cacheIdleMs,
-		protectedGroupIds: () =>
-			new Set([...affinity.protectedGroupIds(), ...traffic.activeGroupIds()]),
+		hardProtectedGroupIds: () => traffic.activeGroupIds(),
+		softProtectedGroupIds: () => affinity.protectedGroupIds(),
+		onPoolKeyRemoved: (groupId) => {
+			affinity.forgetGroup(groupId);
+		},
 		persistState,
 		persistCredentials,
 		reauth: async () => {
@@ -183,6 +213,8 @@ async function main(): Promise<void> {
 		`控制台:http://${config.listen.host === "0.0.0.0" ? "127.0.0.1" : config.listen.host}:${config.listen.port}/ui`,
 	);
 	logger.info(`配置目录:${dir}`);
+	logger.info(`应用日志:${appLogPath}`);
+	logger.info(`崩溃日志:${crashLogPath}`);
 
 	// 有凭据才做启动对账 + 守护
 	if (credentials.accessToken) {

@@ -13,14 +13,31 @@ describe("LocalObservationStore", () => {
 		expect(obs.ewmaTtftMs).toBeLessThan(2000);
 	});
 
-	test("错误率按环形窗口(20)计算", () => {
-		const s = new LocalObservationStore();
-		for (let i = 0; i < 5; i++) s.recordSuccess(1, 1000, T0 + i);
-		for (let i = 0; i < 5; i++) s.recordFailure(1, T0 + 100 + i);
-		expect(s.getObservation(1, T0 + 200)!.errorRate).toBeCloseTo(0.5, 5);
-		// 再来 20 次成功把失败挤出窗口
-		for (let i = 0; i < 20; i++) s.recordSuccess(1, 1000, T0 + 300 + i);
-		expect(s.getObservation(1, T0 + 400)!.errorRate).toBe(0);
+	test("结果稳定率按 3 小时窗口和 500 条上限计算", () => {
+		const windowed = new LocalObservationStore({
+			outcomeWindowMs: 1_000,
+			outcomeMaxSamples: 500,
+		});
+		for (let i = 0; i < 5; i++) windowed.recordSuccess(1, 1000, T0 + i);
+		for (let i = 0; i < 5; i++) windowed.recordFailure(1, T0 + 100 + i);
+		const mixed = windowed.getObservation(1, T0 + 200)!;
+		expect(mixed.recentSamples).toBe(10);
+		expect(mixed.successRate).toBeCloseTo(0.5, 5);
+		expect(mixed.errorRate).toBeCloseTo(0.5, 5);
+
+		const expired = windowed.getObservation(1, T0 + 1_105)!;
+		expect(expired.recentSamples).toBe(0);
+		expect(expired.successRate).toBe(1);
+
+		const bounded = new LocalObservationStore({
+			outcomeWindowMs: 10_000,
+			outcomeMaxSamples: 5,
+		});
+		for (let i = 0; i < 8; i++) bounded.recordFailure(2, T0 + i);
+		for (let i = 0; i < 5; i++) bounded.recordSuccess(2, 1000, T0 + 100 + i);
+		const capped = bounded.getObservation(2, T0 + 200)!;
+		expect(capped.recentSamples).toBe(5);
+		expect(capped.successRate).toBe(1);
 	});
 
 	test("置信度随样本增长、随时间衰减(半衰期 5min)", () => {
@@ -81,9 +98,10 @@ describe("LocalObservationStore", () => {
 		s.recordSuccess(2, 2000, T0);
 		expect(s.asMap(T0).size).toBe(2);
 		const restored = LocalObservationStore.fromJSON(
-			JSON.parse(JSON.stringify(s.toJSON())),
+			JSON.parse(JSON.stringify(s.toJSON(T0))),
 		);
 		expect(restored.getObservation(1, T0)!.ewmaTtftMs).toBe(1000);
+		expect(restored.getObservation(1, T0)!.successRate).toBe(1);
 		expect(() => LocalObservationStore.fromJSON("garbage")).not.toThrow();
 	});
 });

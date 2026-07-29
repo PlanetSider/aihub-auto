@@ -61,13 +61,15 @@ export interface LocalObservation {
 	peakEwmaTtftMs?: number;
 	/** 最近窗口首字延迟 P90 */
 	p90TtftMs?: number;
-	/** 近窗口错误率 0..1 */
+	/** 最近 3 小时最终结果窗口的错误率 0..1。 */
 	errorRate: number;
+	/** 最近 3 小时最终结果窗口的成功率 0..1;旧观测对象可省略。 */
+	successRate?: number;
 	/** 近窗口 TTFT 变异系数(std/mean),样本不足时为 undefined */
 	cv?: number;
 	/** 已完成请求结果总数 */
 	sampleCount: number;
-	/** 最近窗口中的结果数 */
+	/** 最近 3 小时结果窗口中的样本数(最多 500 条)。 */
 	recentSamples?: number;
 	/** 最近窗口中的 TTFT 样本数 */
 	latencySampleCount?: number;
@@ -93,8 +95,6 @@ export interface ScoringOptions {
 	blacklist: number[];
 	/** 账号实际可用分组;未取得时不限制 */
 	allowedGroupIds?: readonly number[];
-	/** 公开统计作为冷启动先验的过期上限 */
-	maxStatusAgeMs: number;
 	/** 本地错误率淘汰阈值 */
 	errorRateCap: number;
 	/** 目标平台 */
@@ -109,11 +109,7 @@ export type ExcludeReason =
 	| "invalid_rate"
 	| "price_band"
 	| "blacklisted"
-	| "stale_sample"
-	| "future_sample"
-	| "no_samples"
 	| "invalid_latency"
-	| "low_confidence"
 	| "local_error_rate"
 	/** economy 仅从最低有效倍率层路由;该层不可用时才自动升档。 */
 	| "economy_price_tier";
@@ -127,6 +123,10 @@ export interface ScoredCandidate {
 	/** 本地观测置信度 0..1 */
 	localConfidence: number;
 	localSampleCount: number;
+	/** 最近 3 小时本地最终结果窗口样本数。 */
+	outcomeSampleCount: number;
+	/** 最近 3 小时本地最终结果窗口成功率。 */
+	successRate: number;
 	/** 本地近期失败率 */
 	errorRate: number;
 	/** 本地融合后的延迟(未保守修正) */

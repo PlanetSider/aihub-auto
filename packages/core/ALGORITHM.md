@@ -17,23 +17,14 @@ AIHub 当前只提供 OpenAI 分组。路由器分成两个互不冲突的平面
 | 属于账号可用组(成功取得账号列表时) | `unavailable_group` |
 | 生效倍率有限、非负且位于 `[priceBand.min, priceBand.max]` | `invalid_rate` / `price_band` |
 | 不在用户黑名单、熔断排除或本次请求排除集 | `blacklisted` |
-| 公开或本地至少一方有可用延迟 | `no_samples` / `invalid_latency` |
-| 公开样本不超过默认 15 分钟,未来偏差不超过 1 分钟 | `stale_sample` / `future_sample` |
+| 上游或本地至少一方有可用 TTFT | `invalid_latency` |
 | 无高置信度本地高错误率 | `local_error_rate` |
-| 最终有足够置信度 | `low_confidence` |
 
-用户专属倍率优先于公开倍率。公开样本过期时,新鲜本地延迟仍可让候选继续参与。
+用户专属倍率优先于公开倍率。上游接口返回的最新有效样本始终可用,不会因年龄标记为过期。
 
-## 2. 公开置信度
+## 2. 上游 TTFT 先验
 
-```text
-freshness = exp(-ln2 * age / (maxStatusAge / 2))
-volume    = 1 - exp(-sampleCount / 20)
-stability = 1 / (1 + CV)       # 有 CV 时
-publicConfidence = freshness * volume * stability
-```
-
-公开统计是冷启动先验,不是永久真值。
+上游 `avg_ttft_ms` 有效时直接作为完整先验,`publicConfidence = 1`。**不因** `last_sample_at` 年龄、`sample_count` 数量或置信度衰减排除分组。
 
 ## 3. 本地观测与 Peak EWMA
 
@@ -44,7 +35,7 @@ TTFT 与最终成败分开记录:
 - 首字节前路由故障或可观测的中途断流:`recordFailure(group)`
 - 客户端主动取消不算上游失败
 
-每组保留最近 20 个 TTFT 和结果。普通 EWMA 的 `alpha=0.3`;Peak EWMA 对峰值立即响应,低值只按时间缓慢恢复:
+每组保留最近 20 个 TTFT 用于 P90/CV,最终成功/失败则保留最近 3 小时、最多 500 条。普通 EWMA 的 `alpha=0.3`;Peak EWMA 对峰值立即响应,低值只按时间缓慢恢复:
 
 ```text
 if ttft > peak:
@@ -54,23 +45,26 @@ else:
   peak = peak * w + ttft * (1 - w)
 ```
 
-同时计算 P90、错误率和 CV。本地置信度为:
+错误率/成功率来自该 3 小时最终结果窗口;P90、CV 和延迟置信度仍来自 TTFT 短窗口。本地置信度为:
 
 ```text
 localConfidence = (1 - exp(-recentSamples / 3)) * exp(-ln2 * age / 5min)
 ```
 
-## 4. 公开/本地融合
+## 4. 上游优先,本地更快才覆盖
 
-更新的一方主导,较旧的一方只保留低权重先验。本地风险延迟优先使用 Peak EWMA,没有时才使用 `0.7 * EWMA + 0.3 * P90`。
+本地风险延迟优先使用 Peak EWMA,没有时才使用 `0.7 * EWMA + 0.3 * P90`。
 
 ```text
-confidence = 1 - (1 - publicConfidence) * (1 - localConfidence)
-effectiveError = min(0.95, localErrorRate * localConfidence)
+useLocal = localValid && localConfidence >= MIN_CONFIDENCE
+         && (!upstreamValid || localRiskLatency < upstreamAvgTtft)
+blendedTtft = useLocal ? localRiskLatency : upstreamAvgTtft
+confidence  = useLocal ? localConfidence : 1
+effectiveError = min(0.95, localErrorRate * outcomeConfidence)
 conservativeLatency = blendedTtft * (2 - confidence) / max(1 - effectiveError, 0.2)
 ```
 
-因此低置信度、尾延迟和失败重试成本都会提高候选延迟,但快速失败不会因响应快而获益;高错误率仍由熔断/硬过滤单独处理。
+也就是:上游有效默认用上游;只有本地足够可信且数值更快时才用本地;上游无效时才回退本地。高错误率仍由熔断/硬过滤单独处理。
 
 ## 5. 价格与速度得分
 
@@ -144,15 +138,11 @@ loadedScore = latencyWeight * loadedSpeedup - priceWeight * premium
 
 ## 9. 自动 Key 池
 
-pool 是默认模式。`ensureKey(groupId)` 使用同组 single-flight,不同组的提交/逐出串行化。LRU 删除必须同时满足:
+pool 是默认模式。`ensureKey(groupId)` 使用同组 single-flight,不同组的提交/逐出串行化。
 
-- 超过 `poolMaxGroups`
-- 不是本次目标或控制面默认组
-- 没有有效会话绑定
-- 没有在飞请求
-- 距最后使用超过缓存宽限期(`decision.cacheIdleMs`)
+普通 LRU 仅在超过 `poolMaxGroups` 时回收已过缓存宽限期(`decision.cacheIdleMs`)且没有会话/Responses 软亲和的最旧 Key。以下强无效原因则不受池上限和旧亲和保护限制:倍率区间外、黑名单、账号不可用、延迟无效、近 3 小时稳定率过低,以及最新成功统计里已消失的历史组。`economy_price_tier` 只是备用价格层,绝不因此回收。
 
-LRU 在创建新 Key、启动对账和每轮守护时执行;历史会话后来过期后,无需再创建一把 Key 也会自动收缩。若没有安全删除对象,池允许暂时超过上限。未被回收的池状态持久化并在重启后对账复用。只管理 `aihub-auto-g{groupId}` 前缀 Key,不触碰用户 Key。`/ctl/status` 只返回 `keyId/lastUsedAt`,不返回 `sk`。
+每次远端删除前都会重新检查硬保护:控制面当前组、正在创建、路由预留和在飞请求永远不删。强无效 Key 删除成功后同步清掉该组会话与 Responses 分支亲和,防止旧记录重新拉回已删除组。LRU 在创建新 Key、启动对账和每轮守护时执行;若没有安全删除对象,池允许暂时超过上限。未被回收的池状态持久化并在重启后对账复用。只管理 `aihub-auto-g{groupId}` 前缀 Key,不触碰用户 Key。`/ctl/status` 只返回 `keyId/lastUsedAt`,不返回 `sk`。
 
 ## 10. Koishi topN
 
@@ -167,11 +157,10 @@ Koishi 只使用公开 OpenAI 统计,不参与请求面会话路由;其 `economy
 | 参数 | 默认值 |
 | --- | ---: |
 | `priceBand` | `[0, 0.15]` |
-| `maxStatusAgeMs` | 15 分钟 |
 | `errorRateCap` | 0.5 |
 | `stickiness` / `cachePenaltyMax` | 0.10 / 0.25 |
 | `cacheIdleMs` / `minDwellMs` | 5 分钟 / 90 秒 |
 | `scoreWindow` / Koishi max | 0.15 / 6 |
-| EWMA alpha / 本地窗口 | 0.3 / 20 |
+| EWMA alpha / TTFT 窗口 / 结果窗口 | 0.3 / 20 / 3 小时(最多 500) |
 | 会话 TTL / 上限 | 24 小时 / 10000 |
 | pool 目标组数 | 4 |

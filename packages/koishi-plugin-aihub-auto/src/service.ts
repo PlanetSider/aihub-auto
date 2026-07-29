@@ -10,7 +10,6 @@ import {
 } from "@aihub-auto/core";
 import {
 	DEFAULT_ERROR_RATE_CAP,
-	DEFAULT_MAX_STATUS_AGE_MS,
 	PLATFORMS,
 } from "@aihub-auto/core";
 
@@ -127,7 +126,6 @@ export class RecommendService {
 				const evaluationOptions = {
 					priceBand: { min: 0, max: opts.maxRate },
 					blacklist: [],
-					maxStatusAgeMs: DEFAULT_MAX_STATUS_AGE_MS,
 					errorRateCap: DEFAULT_ERROR_RATE_CAP,
 					platform,
 					now,

@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHarness, type Harness } from "./harness.ts";
-import { makeStat } from "./mock-upstream.ts";
 
 let h: Harness;
 afterEach(() => h?.dispose());
@@ -124,6 +123,34 @@ describe("executor 模式 pool", () => {
 		expect([...h.mock.keys.values()].map((key) => key.name)).toEqual([
 			"aihub-auto-g2",
 		]);
+	});
+
+	test("强无效闲置组越过会话软保护回收并清理 Responses 亲和", async () => {
+		h = poolHarness(3);
+		await h.executor.ensureKey(1);
+		await h.executor.ensureKey(2);
+		h.affinity.bind("session-1", 1);
+		h.affinity.bindResponse("resp_1", "session-1", 1);
+		h.state.pool["1"]!.lastUsedAt = 0;
+
+		expect(await h.executor.trimPool(new Set([1]))).toBe(1);
+		expect(h.state.pool["1"]).toBeUndefined();
+		expect(h.affinity.resolve("session-1")).toBeUndefined();
+		expect(h.affinity.resolveResponse("resp_1")).toBeUndefined();
+		expect(h.state.pool["2"]).toBeDefined();
+	});
+
+	test("在飞组即使强无效也必须等请求结束才能回收", async () => {
+		h = poolHarness(3);
+		await h.executor.ensureKey(1);
+		h.state.pool["1"]!.lastUsedAt = 0;
+		h.traffic.begin(1);
+
+		expect(await h.executor.trimPool(new Set([1]))).toBe(0);
+		expect(h.state.pool["1"]).toBeDefined();
+		h.traffic.end(1);
+		expect(await h.executor.trimPool(new Set([1]))).toBe(1);
+		expect(h.state.pool["1"]).toBeUndefined();
 	});
 
 	test("对账:回收孤儿前缀 Key,绝不动非前缀 Key,清理失效记录", async () => {

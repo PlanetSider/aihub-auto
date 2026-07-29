@@ -60,6 +60,8 @@ export async function handleControl(
 			ttft?: number;
 			conservative?: number;
 			confidence?: number;
+			successRate?: number;
+			outcomeSamples?: number;
 			score?: number | string;
 			excluded: boolean;
 			excludeReason?: string;
@@ -73,6 +75,8 @@ export async function handleControl(
 					ttft: Math.round(c.blendedTtftMs),
 					conservative: Math.round(c.conservativeLatencyMs),
 					confidence: Number(c.confidence.toFixed(2)),
+					successRate: Number(c.successRate.toFixed(3)),
+					outcomeSamples: c.outcomeSampleCount,
 					score: Number.isFinite(c.score) ? c.score : String(c.score),
 					excluded: false,
 				});
@@ -102,6 +106,15 @@ export async function handleControl(
 			...Object.keys(traffic.activeByGroup ?? {}).map(Number),
 		]);
 		const poolSize = Object.keys(deps.state.pool).length;
+		const forceReclaimReasons = new Set([
+			"platform_mismatch",
+			"unavailable_group",
+			"invalid_rate",
+			"price_band",
+			"blacklisted",
+			"invalid_latency",
+			"local_error_rate",
+		]);
 		const groups = [...groupIds]
 			.sort((left, right) => left - right)
 			.map((groupId) => {
@@ -111,11 +124,17 @@ export async function handleControl(
 				const responseAliases = affinity.aliasesByGroup[String(groupId)] ?? 0;
 				const activeRequests = traffic.activeByGroup?.[String(groupId)] ?? 0;
 				const idleMs = key ? Math.max(now - key.lastUsedAt, 0) : undefined;
-				const protectedGroup =
-					groupId === deps.state.currentGroupId ||
-					sessions > 0 ||
-					responseAliases > 0 ||
-					activeRequests > 0;
+				const hardProtected =
+					groupId === deps.state.currentGroupId || activeRequests > 0;
+				const softProtected = sessions > 0 || responseAliases > 0;
+				const forceReclaim = Boolean(
+					key &&
+					!round?.stale &&
+					(candidate
+						? candidate.excluded &&
+							forceReclaimReasons.has(candidate.excludeReason ?? "")
+						: Boolean(round)),
+				);
 				return {
 					groupId,
 					code: candidate?.code ?? null,
@@ -127,12 +146,14 @@ export async function handleControl(
 					sessions,
 					responseAliases,
 					activeRequests,
+					forceReclaim,
 					reclaimable: Boolean(
 						key &&
-							poolSize > deps.config.poolMaxGroups &&
-							!protectedGroup &&
+							!hardProtected &&
 							idleMs !== undefined &&
-							idleMs >= deps.config.decision.cacheIdleMs,
+							idleMs >= deps.config.decision.cacheIdleMs &&
+							(forceReclaim ||
+								(poolSize > deps.config.poolMaxGroups && !softProtected)),
 					),
 				};
 			});
