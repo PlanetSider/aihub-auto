@@ -131,6 +131,43 @@ describe("评分与模式", () => {
 		expect(spd.standby).toHaveLength(0);
 	});
 
+	test("economy 有结果但 0% 稳定率时不进入可用升档", () => {
+		const obs = new Map<number, LocalObservation>([
+			[
+				2,
+				{
+					groupId: 2,
+					errorRate: 1,
+					successRate: 0,
+					sampleCount: 1,
+					recentSamples: 1,
+					lastAt: NOW,
+					confidence: 1,
+				},
+			],
+		]);
+		const ev = evaluate(
+			[
+				stat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 3000 }),
+				stat({ groupId: 2, rateMultiplier: 0.04, avgTtftMs: 2000 }),
+			],
+			opts({ mode: "economy" }),
+			obs,
+		);
+		expect(ev.eligible.map((candidate) => candidate.stat.groupId)).toEqual([1]);
+		expect(ev.standby).toHaveLength(0);
+		expect(ev.excluded).toContainEqual(
+			expect.objectContaining({
+				stat: expect.objectContaining({ groupId: 2 }),
+				excludeReason: "economy_unstable",
+				evidence: expect.objectContaining({
+					successRate: 0,
+					outcomeSampleCount: 1,
+				}),
+			}),
+		);
+	});
+
 	test("economy 最低价层不稳定或太慢时升到下一健康价格层", () => {
 		const obs = new Map<number, LocalObservation>([
 			[

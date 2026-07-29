@@ -69,7 +69,7 @@ conservativeLatency = blendedTtft * (2 - confidence) / max(1 - effectiveError, 0
 
 ## 5. 价格与速度得分
 
-`economy` 先应用显式健康门槛:最近结果达到 `minOutcomeSamples` 后成功率必须不低于 `minSuccessRate`,保守 TTFT 必须不超过 `maxConservativeLatencyMs`。默认值为 3 条、80%、20 秒,均可在控制台调整。
+`economy` 先应用显式健康门槛:已有最近结果且成功率为 0% 时立即淘汰;达到 `minOutcomeSamples` 后成功率还必须不低于 `minSuccessRate`,保守 TTFT 必须不超过 `maxConservativeLatencyMs`。默认值为 3 条、80%、20 秒,均可在控制台调整。
 
 随后从健康候选中计算 `minimumRate`,当前路由层只包含 `effectiveRate === minimumRate` 的最低健康价格层。更高倍率的健康候选进入 `standby`,它们**可用但当前不花这笔钱**,不属于排除项;最低层因本次失败、熔断、模型不兼容或健康门槛全部退出后,下一价格层自动提升为当前层。当前层内部按保守延迟和在飞负载选择。
 

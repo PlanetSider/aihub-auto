@@ -53,7 +53,7 @@ export interface ModeWeights {
 }
 
 export interface EconomyPolicy {
-	/** 达到该样本数后才启用稳定率门槛。 */
+	/** 达到该样本数后启用最低稳定率门槛;已有结果但 0% 成功率会立即淘汰。 */
 	minOutcomeSamples: number;
 	/** 最近 3 小时最低成功率。 */
 	minSuccessRate: number;

@@ -187,8 +187,9 @@ export function evaluate(
 	const priceCandidates = strictEconomy
 		? pre.filter((candidate) => {
 				if (
-					candidate.outcomeSampleCount >= economyPolicy.minOutcomeSamples &&
-					candidate.successRate < economyPolicy.minSuccessRate
+					(candidate.outcomeSampleCount > 0 && candidate.successRate <= 0) ||
+					(candidate.outcomeSampleCount >= economyPolicy.minOutcomeSamples &&
+						candidate.successRate < economyPolicy.minSuccessRate)
 				) {
 					excluded.push(economyExclude(candidate, "economy_unstable"));
 					return false;
