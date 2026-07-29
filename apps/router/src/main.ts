@@ -121,9 +121,10 @@ async function main(): Promise<void> {
 		poolMaxGroups: config.poolMaxGroups,
 		evictionGraceMs: config.decision.cacheIdleMs,
 		hardProtectedGroupIds: () => traffic.activeGroupIds(),
-		softProtectedGroupIds: () => affinity.protectedGroupIds(),
-		onPoolKeyRemoved: (groupId) => {
-			affinity.forgetGroup(groupId);
+		softProtectedGroupIds: () =>
+			affinity.protectedGroupIds(config.decision.cacheIdleMs),
+		onPoolKeyRemoved: (groupId, forced) => {
+			if (forced) affinity.forgetGroup(groupId);
 		},
 		persistState,
 		persistCredentials,

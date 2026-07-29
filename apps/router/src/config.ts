@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
 	DEFAULT_DECISION_POLICY,
+	DEFAULT_ECONOMY_POLICY,
 	DEFAULT_ERROR_RATE_CAP,
 	DEFAULT_PRICE_BAND,
 } from "@aihub-auto/core";
@@ -24,12 +25,33 @@ export const ConfigSchema = z.object({
 		})
 		.prefault({}),
 	blacklist: z.array(z.number().int()).default([]),
+	economyPolicy: z
+		.object({
+			minOutcomeSamples: z
+				.number()
+				.int()
+				.min(1)
+				.max(100)
+				.default(DEFAULT_ECONOMY_POLICY.minOutcomeSamples),
+			minSuccessRate: z
+				.number()
+				.min(0)
+				.max(1)
+				.default(DEFAULT_ECONOMY_POLICY.minSuccessRate),
+			maxConservativeLatencyMs: z
+				.number()
+				.int()
+				.min(1_000)
+				.max(120_000)
+				.default(DEFAULT_ECONOMY_POLICY.maxConservativeLatencyMs),
+		})
+		.prefault({}),
 	/** pool 为主模式;single 仅兼容无法创建 Key 的账号 */
 	keyMode: z.enum(["single", "pool"]).default("pool"),
 	/** 兼容模式:指定要被全局切组的 keyId;缺省自动选第一个 */
 	singleKeyId: z.number().int().optional(),
 	poolMaxGroups: z.number().int().min(1).max(20).default(4),
-	/** 会话亲和保留 24h;超过后 Key 才可被 LRU 回收 */
+	/** 会话映射保留 24h;池 Key 仅按 cacheIdleMs 短期保护。 */
 	sessionTtlMs: z
 		.number()
 		.int()

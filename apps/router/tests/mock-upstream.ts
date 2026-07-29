@@ -20,6 +20,7 @@ export interface MockBehavior {
 			cachedTokens?: number;
 			inputTokens?: number;
 			body?: string;
+			gzip?: boolean;
 			sse?: boolean;
 		}
 	>;
@@ -203,10 +204,20 @@ export class MockAIHub {
 				);
 			}
 			if (b.status && b.status >= 400) {
-				return this.json(
-					{ error: { message: `mock error group ${groupId}` } },
-					b.status,
-				);
+				const payload = { error: { message: `mock error group ${groupId}` } };
+				if (b.gzip) {
+					return new Response(
+						Bun.gzipSync(new TextEncoder().encode(JSON.stringify(payload))),
+						{
+							status: b.status,
+							headers: {
+								"Content-Type": "application/json",
+								"Content-Encoding": "gzip",
+							},
+						},
+					);
+				}
+				return this.json(payload, b.status);
 			}
 			if (b.sse) {
 				const breakMid = b.breakMidStream ?? false;
@@ -231,7 +242,7 @@ export class MockAIHub {
 					headers: { "Content-Type": "text/event-stream" },
 				});
 			}
-			return this.json({
+			const payload = {
 				id: path.includes("/responses") ? `resp_mock_${groupId}` : "cmpl-1",
 				group: groupId,
 				content: b.body ?? `response from group ${groupId}`,
@@ -242,7 +253,19 @@ export class MockAIHub {
 								prompt_tokens: b.inputTokens ?? b.cachedTokens,
 								prompt_tokens_details: { cached_tokens: b.cachedTokens },
 							},
-			});
+			};
+			if (b.gzip) {
+				return new Response(
+					Bun.gzipSync(new TextEncoder().encode(JSON.stringify(payload))),
+					{
+						headers: {
+							"Content-Type": "application/json",
+							"Content-Encoding": "gzip",
+						},
+					},
+				);
+			}
+			return this.json(payload);
 		}
 
 		return this.json({ error: "not found" }, 404);

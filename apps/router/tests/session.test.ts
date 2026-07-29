@@ -109,6 +109,17 @@ describe("SessionAffinity", () => {
 		expect(affinity.cacheLikelyHot("session", 5_000, 6_001)).toBe(false);
 	});
 
+	test("Key 保护只看缓存窗口,会话映射继续保留到 TTL", () => {
+		const state = StateSchema.parse({});
+		const affinity = new SessionAffinity(state, 60_000, 100);
+		affinity.bind("session", 7, 1_000);
+		affinity.bindResponse("resp_1", "session", 7, 1_500);
+		expect(affinity.protectedGroupIds(5_000, 2_000)).toEqual(new Set([7]));
+		expect(affinity.protectedGroupIds(5_000, 7_001)).toEqual(new Set());
+		expect(affinity.resolve("session", 7_001)).toBe(7);
+		expect(affinity.resolveResponse("resp_1", 7_001)?.groupId).toBe(7);
+	});
+
 	test("TTL prune 同时清理失效响应 alias", () => {
 		const state = StateSchema.parse({});
 		const affinity = new SessionAffinity(state, 1_000, 100);

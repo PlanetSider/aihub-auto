@@ -57,8 +57,15 @@ export function decide(
 ): Decision {
 	const failover = opts?.failover ?? false;
 	const failed = new Set(opts?.failedGroupIds ?? []);
+	const remainingEligible = evaluation.eligible.filter(
+		(candidate) => !failed.has(candidate.stat.groupId),
+	);
 	const eligible = failover
-		? evaluation.eligible.filter((c) => !failed.has(c.stat.groupId))
+		? remainingEligible.length > 0
+			? remainingEligible
+			: evaluation.standby.filter(
+					(candidate) => !failed.has(candidate.stat.groupId),
+				)
 		: evaluation.eligible;
 
 	const top = eligible.find((c) => Number.isFinite(c.score));
@@ -105,15 +112,13 @@ export function decide(
 	}
 
 	if (!current) {
-		const leftEconomyTier = evaluation.excluded.some(
-			(candidate) =>
-				candidate.stat.groupId === state.currentGroupId &&
-				candidate.excludeReason === "economy_price_tier",
+		const currentIsStandby = evaluation.standby.some(
+			(candidate) => candidate.stat.groupId === state.currentGroupId,
 		);
-		// economy 的高价旧默认组仍有效,但应直接降到最低价层;其他排除才是失效。
+		// economy 的高价旧默认组仍可用,但新默认组应回到当前最低健康价格层。
 		return switchTo(
 			top,
-			leftEconomyTier ? "better_price" : "current_invalid",
+			currentIsStandby ? "better_price" : "current_invalid",
 			0,
 		);
 	}

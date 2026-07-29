@@ -44,6 +44,25 @@ describe("硬过滤", () => {
 		expect(ev.excluded[0]?.excludeReason).toBe("blacklisted");
 	});
 
+	test("熔断冷却与用户黑名单分开呈现", () => {
+		const ev = evaluate(
+			[stat({ groupId: 7 }), stat({ groupId: 8 })],
+			opts({ blacklist: [7], circuitOpenGroupIds: [8] }),
+		);
+		expect(ev.excluded).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					stat: expect.objectContaining({ groupId: 7 }),
+					excludeReason: "blacklisted",
+				}),
+				expect.objectContaining({
+					stat: expect.objectContaining({ groupId: 8 }),
+					excludeReason: "circuit_open",
+				}),
+			]),
+		);
+	});
+
 	test("上游样本时间和数量不参与排除", () => {
 		const ev = evaluate(
 			[
@@ -100,19 +119,61 @@ describe("评分与模式", () => {
 	const cheap = stat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 5000 });
 	const fast = stat({ groupId: 2, rateMultiplier: 0.08, avgTtftMs: 200 });
 
-	test("economy 锁定最低有效倍率层,speed 仍可选极快高价组", () => {
+	test("economy 当前层锁定最低健康倍率,高价健康组进入可用升档", () => {
 		const eco = evaluate([cheap, fast], opts({ mode: "economy" }));
 		expect(eco.eligible.map((candidate) => candidate.stat.groupId)).toEqual([
 			1,
 		]);
-		expect(eco.excluded).toContainEqual({
-			stat: fast,
-			effectiveRate: 0.08,
-			excluded: true,
-			excludeReason: "economy_price_tier",
-		});
+		expect(eco.standby.map((candidate) => candidate.stat.groupId)).toEqual([2]);
+		expect(eco.excluded).toHaveLength(0);
 		const spd = evaluate([cheap, fast], opts({ mode: "speed" }));
 		expect(spd.eligible[0]?.stat.groupId).toBe(2);
+		expect(spd.standby).toHaveLength(0);
+	});
+
+	test("economy 最低价层不稳定或太慢时升到下一健康价格层", () => {
+		const obs = new Map<number, LocalObservation>([
+			[
+				1,
+				{
+					groupId: 1,
+					ewmaTtftMs: 4000,
+					errorRate: 0.3,
+					successRate: 0.7,
+					sampleCount: 5,
+					recentSamples: 5,
+					outcomeConfidence: 1,
+					lastAt: NOW,
+					confidence: 1,
+				},
+			],
+		]);
+		const unstable = evaluate(
+			[cheap, stat({ groupId: 2, rateMultiplier: 0.03, avgTtftMs: 3000 })],
+			opts({ mode: "economy" }),
+			obs,
+		);
+		expect(unstable.eligible[0]?.stat.groupId).toBe(2);
+		expect(unstable.excluded[0]?.excludeReason).toBe("economy_unstable");
+		expect(unstable.excluded[0]?.evidence).toMatchObject({
+			successRate: 0.7,
+			outcomeSampleCount: 5,
+			localSampleCount: 5,
+		});
+
+		const slow = evaluate(
+			[
+				stat({ groupId: 1, rateMultiplier: 0.01, avgTtftMs: 30_000 }),
+				stat({ groupId: 2, rateMultiplier: 0.02, avgTtftMs: 3000 }),
+			],
+			opts({ mode: "economy" }),
+		);
+		expect(slow.eligible[0]?.stat.groupId).toBe(2);
+		expect(slow.excluded[0]?.excludeReason).toBe("economy_too_slow");
+		expect(slow.excluded[0]?.evidence).toMatchObject({
+			blendedTtftMs: 30_000,
+			conservativeLatencyMs: 30_000,
+		});
 	});
 
 	test("基准溢价为 0,溢价按最低倍率计算", () => {
@@ -174,7 +235,7 @@ describe("评分与模式", () => {
 		expect(ev.eligible[0]?.blendedTtftMs).toBeCloseTo(1000, 0);
 	});
 
-	test("本地可信且更快才覆盖上游,本地更慢时坚持上游", () => {
+	test("有本地样本时按置信度与云端双向融合", () => {
 		const faster = new Map<number, LocalObservation>([
 			[
 				1,
@@ -193,7 +254,7 @@ describe("评分与模式", () => {
 			opts(),
 			faster,
 		);
-		expect(local.eligible[0]?.blendedTtftMs).toBe(1000);
+		expect(local.eligible[0]?.blendedTtftMs).toBe(2000);
 
 		faster.get(1)!.ewmaTtftMs = 5000;
 		const upstream = evaluate(
@@ -201,7 +262,32 @@ describe("评分与模式", () => {
 			opts(),
 			faster,
 		);
-		expect(upstream.eligible[0]?.blendedTtftMs).toBe(3000);
+		expect(upstream.eligible[0]?.blendedTtftMs).toBe(4000);
+	});
+
+	test("本地 TTFT 为零样本时完全忽略本地延迟", () => {
+		const obs = new Map<number, LocalObservation>([
+			[
+				1,
+				{
+					groupId: 1,
+					ewmaTtftMs: 100,
+					latencySampleCount: 0,
+					latencyConfidence: 1,
+					errorRate: 0,
+					sampleCount: 0,
+					lastAt: NOW,
+					confidence: 1,
+				},
+			],
+		]);
+		const candidate = evaluate(
+			[stat({ groupId: 1, avgTtftMs: 3000 })],
+			opts(),
+			obs,
+		).eligible[0]!;
+		expect(candidate.blendedTtftMs).toBe(3000);
+		expect(candidate.localSampleCount).toBe(0);
 	});
 
 	test("有效上游 TTFT 不因样本时间或数量降权", () => {

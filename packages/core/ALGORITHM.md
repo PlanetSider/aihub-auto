@@ -16,7 +16,8 @@ AIHub 当前只提供 OpenAI 分组。路由器分成两个互不冲突的平面
 | OpenAI 平台 | `platform_mismatch` |
 | 属于账号可用组(成功取得账号列表时) | `unavailable_group` |
 | 生效倍率有限、非负且位于 `[priceBand.min, priceBand.max]` | `invalid_rate` / `price_band` |
-| 不在用户黑名单、熔断排除或本次请求排除集 | `blacklisted` |
+| 不在用户黑名单 | `blacklisted` |
+| 不处于熔断冷却 | `circuit_open` |
 | 上游或本地至少一方有可用 TTFT | `invalid_latency` |
 | 无高置信度本地高错误率 | `local_error_rate` |
 
@@ -51,24 +52,26 @@ else:
 localConfidence = (1 - exp(-recentSamples / 3)) * exp(-ln2 * age / 5min)
 ```
 
-## 4. 上游优先,本地更快才覆盖
+## 4. 云端与本地 TTFT 融合
 
-本地风险延迟优先使用 Peak EWMA,没有时才使用 `0.7 * EWMA + 0.3 * P90`。
+本地风险延迟优先使用 Peak EWMA,没有时才使用 `0.7 * EWMA + 0.3 * P90`。本地 TTFT 样本数为 0 时权重严格为 0,只使用云端。存在本地样本时按样本量、新鲜度得到的 `localConfidence` 双向融合;本地更快会下调延迟,本地更慢也会抬高延迟。
 
 ```text
-useLocal = localValid && localConfidence >= MIN_CONFIDENCE
-         && (!upstreamValid || localRiskLatency < upstreamAvgTtft)
-blendedTtft = useLocal ? localRiskLatency : upstreamAvgTtft
-confidence  = useLocal ? localConfidence : 1
+localWeight = localTtftSamples > 0 ? localConfidence : 0
+blendedTtft = upstreamValid
+  ? upstreamAvgTtft * (1 - localWeight) + localRiskLatency * localWeight
+  : localRiskLatency
 effectiveError = min(0.95, localErrorRate * outcomeConfidence)
 conservativeLatency = blendedTtft * (2 - confidence) / max(1 - effectiveError, 0.2)
 ```
 
-也就是:上游有效默认用上游;只有本地足够可信且数值更快时才用本地;上游无效时才回退本地。高错误率仍由熔断/硬过滤单独处理。
+云端是始终可用的先验,不会因样本时间或数量过期;本地是随真实请求逐步取得权重的修正。高错误率仍由稳定率门槛、熔断和硬过滤处理。
 
 ## 5. 价格与速度得分
 
-先从通过硬过滤的候选中计算 `minimumRate`。`economy` 将价格作为硬优先级:只保留 `effectiveRate === minimumRate` 的最低价层,高价候选标记为 `economy_price_tier`;最低层因本次失败、熔断、模型不兼容或其他硬条件全部被排除后,才以剩余候选的新最低倍率自动升档。最低价层内部仍按保守延迟和在飞负载选择。
+`economy` 先应用显式健康门槛:最近结果达到 `minOutcomeSamples` 后成功率必须不低于 `minSuccessRate`,保守 TTFT 必须不超过 `maxConservativeLatencyMs`。默认值为 3 条、80%、20 秒,均可在控制台调整。
+
+随后从健康候选中计算 `minimumRate`,当前路由层只包含 `effectiveRate === minimumRate` 的最低健康价格层。更高倍率的健康候选进入 `standby`,它们**可用但当前不花这笔钱**,不属于排除项;最低层因本次失败、熔断、模型不兼容或健康门槛全部退出后,下一价格层自动提升为当前层。当前层内部按保守延迟和在飞负载选择。
 
 `balanced`、`speed` 以及 `economy` 的同价层使用:
 
@@ -140,9 +143,11 @@ loadedScore = latencyWeight * loadedSpeedup - priceWeight * premium
 
 pool 是默认模式。`ensureKey(groupId)` 使用同组 single-flight,不同组的提交/逐出串行化。
 
-普通 LRU 仅在超过 `poolMaxGroups` 时回收已过缓存宽限期(`decision.cacheIdleMs`)且没有会话/Responses 软亲和的最旧 Key。以下强无效原因则不受池上限和旧亲和保护限制:倍率区间外、黑名单、账号不可用、延迟无效、近 3 小时稳定率过低,以及最新成功统计里已消失的历史组。`economy_price_tier` 只是备用价格层,绝不因此回收。
+会话与 Responses 路由映射保留到 `sessionTtlMs`(默认 24 小时),但只有最近 `decision.cacheIdleMs`(默认 5 分钟)使用过的亲和组会短期保护 Key。缓存窗口结束后,普通 LRU 可回收 Key 而不删除会话映射;后续续接时按原组自动重建 Key,因此连续性不占用长期池容量。
 
-每次远端删除前都会重新检查硬保护:控制面当前组、正在创建、路由预留和在飞请求永远不删。强无效 Key 删除成功后同步清掉该组会话与 Responses 分支亲和,防止旧记录重新拉回已删除组。LRU 在创建新 Key、启动对账和每轮守护时执行;若没有安全删除对象,池允许暂时超过上限。未被回收的池状态持久化并在重启后对账复用。只管理 `aihub-auto-g{groupId}` 前缀 Key,不触碰用户 Key。`/ctl/status` 只返回 `keyId/lastUsedAt`,不返回 `sk`。
+普通 LRU 在超过 `poolMaxGroups` 时立即回收没有近期缓存亲和的最旧 Key;缓存窗口只保护真实近期亲和,不为无亲和 Key 提供额外宽限。倍率区间外、用户黑名单、账号不可用、延迟无效、近 3 小时稳定率过低,以及最新成功统计里已消失的历史组属于强无效原因,经过缓存宽限后可越过旧亲和回收。`standby` 升档层是健康可用组,绝不因此强制回收;熔断冷却是临时状态,也只参与路由排除和普通 LRU。
+
+每次远端删除前都会重新检查硬保护:控制面当前组、正在创建、路由预留和在飞请求永远不删。只有强无效 Key 删除成功后才同步清掉该组会话与 Responses 分支亲和。LRU 在创建新 Key、启动对账和每轮守护时执行;若没有安全删除对象,池允许暂时超过上限。未被回收的池状态持久化并在重启后对账复用。只管理 `aihub-auto-g{groupId}` 前缀 Key,不触碰用户 Key。`/ctl/status` 只返回 `keyId/lastUsedAt`,不返回 `sk`。
 
 ## 10. Koishi topN
 
@@ -163,4 +168,5 @@ Koishi 只使用公开 OpenAI 统计,不参与请求面会话路由;其 `economy
 | `scoreWindow` / Koishi max | 0.15 / 6 |
 | EWMA alpha / TTFT 窗口 / 结果窗口 | 0.3 / 20 / 3 小时(最多 500) |
 | 会话 TTL / 上限 | 24 小时 / 10000 |
+| economy 稳定率 / 样本门槛 / 最大保守 TTFT | 80% / 3 / 20 秒 |
 | pool 目标组数 | 4 |

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { connect } from "node:net";
 import { handleProxy } from "../src/proxy.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { makeStat } from "./mock-upstream.ts";
@@ -67,6 +68,14 @@ describe("反代基础", () => {
 		expect(obs!.errorRate).toBe(0);
 	});
 
+	test("上游 gzip 自动解压后移除编码头,客户端不二次解压", async () => {
+		h = await setupRouted();
+		h.mock.behavior.groups.set(1, { gzip: true });
+		const res = await handleProxy(proxyReq(), h.proxyDeps);
+		expect(res.headers.get("content-encoding")).toBeNull();
+		expect((await res.json()) as { group: number }).toMatchObject({ group: 1 });
+	});
+
 	test("客户端自带 Authorization 被丢弃,注入的是池 Key", async () => {
 		h = await setupRouted();
 		await handleProxy(
@@ -113,12 +122,34 @@ describe("反代基础", () => {
 				),
 			{ preconnect() {} },
 		);
-		const response = await handleProxy(proxyReq(), h.proxyDeps);
-		const reader = response.body!.getReader();
-		expect((await reader.read()).done).toBe(false);
-		await reader.cancel("client gone");
-		expect(canceled).toBe(true);
-		expect(h.traffic.snapshot().activeStreams).toBe(0);
+		const server = Bun.serve({
+			port: 0,
+			fetch: (request) => handleProxy(request, h.proxyDeps),
+		});
+		try {
+			const payload = JSON.stringify({ model: "gpt-test", messages: [] });
+			await new Promise<void>((resolve, reject) => {
+				const socket = connect(
+					{ host: "127.0.0.1", port: server.port! },
+					() => {
+						socket.write(
+							`POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(payload)}\r\nConnection: close\r\n\r\n${payload}`,
+						);
+					},
+				);
+				socket.once("data", () => {
+					socket.destroy();
+					resolve();
+				});
+				socket.once("error", reject);
+			});
+			for (let i = 0; i < 40 && !canceled; i++) await Bun.sleep(5);
+			expect(canceled).toBe(true);
+			expect(h.traffic.snapshot().activeStreams).toBe(0);
+			expect(h.observations.asMap().get(1)?.recentSamples ?? 0).toBe(0);
+		} finally {
+			server.stop(true);
+		}
 	});
 
 	test("客户端取消后继续 pull 不得抛出 Controller is already closed", async () => {
@@ -147,11 +178,16 @@ describe("反代基础", () => {
 				),
 			{ preconnect() {} },
 		);
-		const response = await handleProxy(proxyReq(), h.proxyDeps);
+		const downstream = new AbortController();
+		const response = await handleProxy(
+			proxyReq(undefined, { signal: downstream.signal }),
+			h.proxyDeps,
+		);
 		const reader = response.body!.getReader();
 		expect(new TextDecoder().decode((await reader.read()).value)).toContain(
 			"chunk-1",
 		);
+		downstream.abort("client gone");
 		const cancelPromise = reader.cancel("client gone");
 		gate.resolve();
 		await cancelPromise;
@@ -257,9 +293,52 @@ describe("故障转移", () => {
 		h = await setupRouted();
 		h.mock.behavior.groups.set(1, { status: 500 });
 		h.mock.behavior.groups.set(2, { status: 500 });
-		h.mock.behavior.groups.set(3, { status: 500 });
+		h.mock.behavior.groups.set(3, { status: 500, gzip: true });
 		const res = await handleProxy(proxyReq(), h.proxyDeps);
 		expect(res.status).toBe(500);
+		expect(res.headers.get("content-encoding")).toBeNull();
+		expect(res.headers.get("x-aihub-auto-local-response")).toBeNull();
+		expect(res.headers.get("x-aihub-auto-group")).not.toBeNull();
+		expect(
+			((await res.json()) as { error: { message: string } }).error.message,
+		).toContain("HTTP 500");
+	});
+
+	test("Bun.serve 下全部失败返回可读终止体且无控制器拒绝", async () => {
+		h = await setupRouted();
+		h.mock.behavior.groups.set(1, { status: 500 });
+		h.mock.behavior.groups.set(2, { status: 502 });
+		h.mock.behavior.groups.set(3, { status: 503, gzip: true });
+		const unhandled: unknown[] = [];
+		const onUnhandled = (reason: unknown) => unhandled.push(reason);
+		process.on("unhandledRejection", onUnhandled);
+		const server = Bun.serve({
+			port: 0,
+			fetch: (request) => handleProxy(request, h.proxyDeps),
+		});
+		try {
+			const res = await fetch(new URL("/v1/chat/completions", server.url), {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ model: "gpt-test", messages: [] }),
+			});
+			expect(res.status).toBe(503);
+			expect(res.headers.get("content-encoding")).toBeNull();
+			expect(
+				((await res.json()) as { error: { message: string } }).error.message,
+			).toContain("HTTP 503");
+			await Bun.sleep(20);
+			expect(
+				unhandled.filter(
+					(reason) =>
+						reason instanceof Error &&
+						/Controller is already closed/i.test(reason.message),
+				),
+			).toEqual([]);
+		} finally {
+			process.off("unhandledRejection", onUnhandled);
+			server.stop(true);
+		}
 	});
 
 	test("TTFB 超时 ⇒ 换组", async () => {
@@ -315,8 +394,9 @@ describe("故障转移", () => {
 		}) as unknown as typeof fetch;
 		const res = await handleProxy(proxyReq(), h.proxyDeps);
 		expect(res.status).toBe(200); // 头已 200
-		const text = await res.text().catch(() => "__stream_error__");
-		// 不管底层 HTTP 栈对断流报错还是截断,都不得包含完整结束标记
+		const text = await res.text();
+		// 已提交的响应必须安全截断,不得再把断流注入下游 controller.error。
+		expect(text).toContain("data: partial");
 		expect(text).not.toContain("[DONE]");
 		// 未发生重试/切组(响应已开始)
 		expect(res.headers.get("x-aihub-auto-group")).toBe("1");
@@ -522,10 +602,12 @@ describe("single 兼容模式", () => {
 						controller.close();
 					},
 				}),
+				{ headers: { "x-aihub-auto-local-response": "1" } },
 			);
 		}) as typeof fetch;
 
 		const first = await handleProxy(proxyReq(), h.proxyDeps);
+		expect(first.headers.get("x-aihub-auto-local-response")).toBeNull();
 		const firstBody = first.text();
 		h.config.blacklist.push(1);
 		let secondResolved = false;

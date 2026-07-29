@@ -376,12 +376,22 @@ export class SessionAffinity {
 		return { sessions, aliases };
 	}
 
-	protectedGroupIds(now = Date.now()): Set<number> {
+	/**
+	 * 仅近期亲和需要保留池 Key 以复用前缀缓存。较老的会话/Responses
+	 * 记录仍保留到 TTL 以维持上游连续性,需要时再自动创建对应 Key。
+	 */
+	protectedGroupIds(cacheIdleMs: number, now = Date.now()): Set<number> {
 		this.prune(now);
+		const windowMs = Math.min(Math.max(cacheIdleMs, 0), this.ttlMs);
+		const recent = (lastUsedAt: number) => now - lastUsedAt <= windowMs;
 		return new Set([
-			...Object.values(this.state.sessions).map((binding) => binding.groupId),
+			...Object.values(this.state.sessions)
+				.filter((binding) => recent(binding.lastUsedAt))
+				.map((binding) => binding.groupId),
 			...Object.values(this.state.responseAliases).flatMap((alias) =>
-				alias.groupId === undefined ? [] : [alias.groupId],
+				alias.groupId === undefined || !recent(alias.lastUsedAt)
+					? []
+					: [alias.groupId],
 			),
 		]);
 	}

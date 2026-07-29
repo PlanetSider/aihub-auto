@@ -1,6 +1,7 @@
 /**
  * 6 目标交叉编译:bun build --compile。
  * 产物 artifacts/aihub-auto-{os}-{arch}.zip(内含二进制 + README)。
+ * 可用 AIHUB_AUTO_ARTIFACTS_DIR 覆盖输出目录。
  */
 import { mkdir, rm, cp } from "node:fs/promises";
 import { join } from "node:path";
@@ -27,7 +28,8 @@ const TARGETS: { target: string; os: string; arch: string; bin: string }[] = [
 ];
 
 const root = join(import.meta.dir, "..");
-const artifacts = join(root, "artifacts");
+const artifacts =
+	process.env.AIHUB_AUTO_ARTIFACTS_DIR ?? join(root, "artifacts");
 await rm(artifacts, { recursive: true, force: true });
 await mkdir(artifacts, { recursive: true });
 
@@ -91,4 +93,4 @@ if (failed > 0) {
 	console.error(`${failed} 个目标失败`);
 	process.exit(1);
 }
-console.log("构建完成 → artifacts/");
+console.log(`构建完成 → ${artifacts}`);

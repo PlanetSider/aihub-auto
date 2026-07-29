@@ -225,6 +225,22 @@ describe("故障转移", () => {
 		expect(d.targetGroupId).toBe(second);
 	});
 
+	test("economy 当前价层全失败 ⇒ 升档到 standby", () => {
+		const e = ev("economy");
+		const currentTier = e.eligible.map((candidate) => candidate.stat.groupId);
+		expect(e.standby).toHaveLength(1);
+		const d = decide(
+			e,
+			{ currentGroupId: currentTier[0] },
+			policy,
+			idleTraffic(),
+			NOW,
+			{ failover: true, failedGroupIds: currentTier },
+		);
+		expect(d.reason).toBe("failover");
+		expect(d.targetGroupId).toBe(e.standby[0]!.stat.groupId);
+	});
+
 	test("failover 全部失败 ⇒ no_candidate", () => {
 		const e = ev();
 		const ids = e.eligible.map((c) => c.stat.groupId);

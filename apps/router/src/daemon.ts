@@ -148,11 +148,9 @@ export class RouteDaemon {
 		return {
 			mode: config.mode,
 			priceBand: config.priceBand,
-			blacklist: [
-				...config.blacklist,
-				...this.breakerGroupIds(now, allowHalfOpen),
-				...extraBlacklist,
-			],
+			blacklist: [...config.blacklist, ...extraBlacklist],
+			circuitOpenGroupIds: this.breakerGroupIds(now, allowHalfOpen),
+			economyPolicy: config.economyPolicy,
 			allowedGroupIds: this.allowedGroupIds,
 			errorRateCap: config.errorRateCap,
 			platform,
@@ -282,6 +280,11 @@ export class RouteDaemon {
 				score: Number.isFinite(candidate.score)
 					? Number(candidate.score.toFixed(4))
 					: "-inf",
+			})),
+			standby: evaluation.standby.map((candidate) => ({
+				group: candidate.stat.groupId,
+				rate: candidate.effectiveRate,
+				conservative: Math.round(candidate.conservativeLatencyMs),
 			})),
 			excluded: evaluation.excluded.map((candidate) => ({
 				group: candidate.stat.groupId,

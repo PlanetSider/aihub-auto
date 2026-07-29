@@ -57,7 +57,7 @@ describe("守护循环", () => {
 		expect(h.mock.keys.size).toBe(0);
 	});
 
-	test("熔断组并入黑名单:open 组不参与决策", async () => {
+	test("熔断冷却独立于用户黑名单:open 组不参与决策", async () => {
 		h = createHarness({ configPatch: { keyMode: "pool" } });
 		h.mock.stats = [
 			makeStat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 1000 }),
@@ -66,8 +66,12 @@ describe("守护循环", () => {
 		for (let i = 0; i < 3; i++) h.breaker.recordFailure(1);
 		const round = await h.daemon.runOnce();
 		expect(h.state.currentGroupId).toBe(2);
-		const excludedIds = round.evaluation.excluded.map((e) => e.stat.groupId);
-		expect(excludedIds).toContain(1);
+		expect(
+			round.evaluation.excluded.find(
+				(candidate) => candidate.stat.groupId === 1,
+			)?.excludeReason,
+		).toBe("circuit_open");
+		expect(h.config.blacklist).toEqual([]);
 	});
 
 	test("超出价格区间的闲置池组会在守护轮回收并清理亲和", async () => {
@@ -95,8 +99,9 @@ describe("守护循环", () => {
 
 		const round = await h.daemon.runOnce();
 		expect(
-			round.evaluation.excluded.find((candidate) => candidate.stat.groupId === 2)
-				?.excludeReason,
+			round.evaluation.excluded.find(
+				(candidate) => candidate.stat.groupId === 2,
+			)?.excludeReason,
 		).toBe("price_band");
 		expect(h.state.pool["2"]).toBeUndefined();
 		expect(h.affinity.resolve("stale-session")).toBeUndefined();
@@ -114,7 +119,12 @@ describe("省钱优先", () => {
 			makeStat({ groupId: 2, rateMultiplier: 0.02, avgTtftMs: 5_000 }),
 			makeStat({ groupId: 3, rateMultiplier: 0.03, avgTtftMs: 100 }),
 		];
-		await h.daemon.runOnce();
+		const round = await h.daemon.runOnce();
+		expect(round.evaluation.eligible.map((c) => c.stat.groupId).sort()).toEqual(
+			[1, 2],
+		);
+		expect(round.evaluation.standby.map((c) => c.stat.groupId)).toEqual([3]);
+		expect(round.evaluation.excluded).toHaveLength(0);
 
 		for (let index = 0; index < 8; index++) {
 			const key = await h.daemon.route({ sessionKey: `new-${index}` });
@@ -241,10 +251,14 @@ describe("状态持久化与恢复", () => {
 
 describe("控制台 API", () => {
 	test("status/config/route-once/login 全链路", async () => {
-		h = createHarness({ withServer: true, configPatch: { keyMode: "pool" } });
+		h = createHarness({
+			withServer: true,
+			configPatch: { keyMode: "pool", mode: "economy" },
+		});
 		h.mock.stats = [
 			makeStat({ groupId: 1, rateMultiplier: 0.03, avgTtftMs: 1500 }),
 			makeStat({ groupId: 2, rateMultiplier: 0.2, avgTtftMs: 900 }), // 出价格区间 ⇒ excluded
+			makeStat({ groupId: 3, rateMultiplier: 0.01, avgTtftMs: 30_000 }), // 超过省钱延迟门槛
 		];
 		h.observations.recordSuccess(1, 1_000);
 		const base = h.serverUrl!;
@@ -276,6 +290,8 @@ describe("控制台 API", () => {
 				groupId: number;
 				excluded: boolean;
 				excludeReason?: string;
+				ttft?: number;
+				conservative?: number;
 				successRate?: number;
 				outcomeSamples?: number;
 			}[];
@@ -308,6 +324,13 @@ describe("控制台 API", () => {
 		const excluded = status.candidates.find((c) => c.groupId === 2);
 		expect(excluded?.excluded).toBe(true);
 		expect(excluded?.excludeReason).toBe("price_band");
+		const tooSlow = status.candidates.find((c) => c.groupId === 3);
+		expect(tooSlow).toMatchObject({
+			excluded: true,
+			excludeReason: "economy_too_slow",
+			ttft: 30_000,
+			conservative: 30_000,
+		});
 
 		// config 热更新
 		const cfgRes = await fetch(`${base}/ctl/config`, {
@@ -318,6 +341,27 @@ describe("控制台 API", () => {
 		expect(cfgRes.status).toBe(200);
 		expect(h.config.mode).toBe("speed");
 		expect(h.config.priceBand.max).toBe(0.3);
+
+		h.config.economyPolicy = {
+			minOutcomeSamples: 9,
+			minSuccessRate: 0.9,
+			maxConservativeLatencyMs: 40_000,
+		};
+		const partialCfgRes = await fetch(`${base}/ctl/config`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				priceBand: { max: 0.25 },
+				economyPolicy: { minSuccessRate: 0.85 },
+			}),
+		});
+		expect(partialCfgRes.status).toBe(200);
+		expect(h.config.priceBand).toEqual({ min: 0, max: 0.25 });
+		expect(h.config.economyPolicy).toEqual({
+			minOutcomeSamples: 9,
+			minSuccessRate: 0.85,
+			maxConservativeLatencyMs: 40_000,
+		});
 
 		const restartRes = await fetch(`${base}/ctl/config`, {
 			method: "POST",

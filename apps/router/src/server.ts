@@ -60,9 +60,12 @@ export async function handleControl(
 			ttft?: number;
 			conservative?: number;
 			confidence?: number;
+			localWeight?: number;
+			localSamples?: number;
 			successRate?: number;
 			outcomeSamples?: number;
 			score?: number | string;
+			standby?: boolean;
 			excluded: boolean;
 			excludeReason?: string;
 		}> = [];
@@ -75,9 +78,28 @@ export async function handleControl(
 					ttft: Math.round(c.blendedTtftMs),
 					conservative: Math.round(c.conservativeLatencyMs),
 					confidence: Number(c.confidence.toFixed(2)),
+					localWeight: Number(c.localConfidence.toFixed(2)),
+					localSamples: c.localSampleCount,
 					successRate: Number(c.successRate.toFixed(3)),
 					outcomeSamples: c.outcomeSampleCount,
 					score: Number.isFinite(c.score) ? c.score : String(c.score),
+					excluded: false,
+				});
+			}
+			for (const c of round.evaluation.standby) {
+				candidates.push({
+					groupId: c.stat.groupId,
+					code: c.stat.code,
+					rate: c.effectiveRate,
+					ttft: Math.round(c.blendedTtftMs),
+					conservative: Math.round(c.conservativeLatencyMs),
+					confidence: Number(c.confidence.toFixed(2)),
+					localWeight: Number(c.localConfidence.toFixed(2)),
+					localSamples: c.localSampleCount,
+					successRate: Number(c.successRate.toFixed(3)),
+					outcomeSamples: c.outcomeSampleCount,
+					score: Number.isFinite(c.score) ? c.score : String(c.score),
+					standby: true,
 					excluded: false,
 				});
 			}
@@ -86,12 +108,31 @@ export async function handleControl(
 					groupId: e.stat.groupId,
 					code: e.stat.code,
 					rate: e.effectiveRate ?? e.stat.rateMultiplier,
+					ttft: e.evidence ? Math.round(e.evidence.blendedTtftMs) : undefined,
+					conservative: e.evidence
+						? Math.round(e.evidence.conservativeLatencyMs)
+						: undefined,
+					confidence: e.evidence
+						? Number(e.evidence.confidence.toFixed(2))
+						: undefined,
+					localWeight: e.evidence
+						? Number(e.evidence.localConfidence.toFixed(2))
+						: undefined,
+					localSamples: e.evidence?.localSampleCount,
+					successRate: e.evidence
+						? Number(e.evidence.successRate.toFixed(3))
+						: undefined,
+					outcomeSamples: e.evidence?.outcomeSampleCount,
 					excluded: true,
 					excludeReason: e.excludeReason,
 				});
 			}
 		}
 		const affinity = deps.proxyDeps.affinity.stats(now);
+		const cacheProtectedGroups = deps.proxyDeps.affinity.protectedGroupIds(
+			deps.config.decision.cacheIdleMs,
+			now,
+		);
 		const traffic = deps.proxyDeps.traffic.snapshot(now);
 		const candidateByGroup = new Map(
 			candidates.map((candidate) => [candidate.groupId, candidate]),
@@ -126,14 +167,14 @@ export async function handleControl(
 				const idleMs = key ? Math.max(now - key.lastUsedAt, 0) : undefined;
 				const hardProtected =
 					groupId === deps.state.currentGroupId || activeRequests > 0;
-				const softProtected = sessions > 0 || responseAliases > 0;
+				const cacheProtected = cacheProtectedGroups.has(groupId);
 				const forceReclaim = Boolean(
 					key &&
-					!round?.stale &&
-					(candidate
-						? candidate.excluded &&
-							forceReclaimReasons.has(candidate.excludeReason ?? "")
-						: Boolean(round)),
+						!round?.stale &&
+						(candidate
+							? candidate.excluded &&
+								forceReclaimReasons.has(candidate.excludeReason ?? "")
+							: Boolean(round)),
 				);
 				return {
 					groupId,
@@ -150,11 +191,12 @@ export async function handleControl(
 					reclaimable: Boolean(
 						key &&
 							!hardProtected &&
-							idleMs !== undefined &&
-							idleMs >= deps.config.decision.cacheIdleMs &&
-							(forceReclaim ||
-								(poolSize > deps.config.poolMaxGroups && !softProtected)),
+							((forceReclaim &&
+								idleMs !== undefined &&
+								idleMs >= deps.config.decision.cacheIdleMs) ||
+								(poolSize > deps.config.poolMaxGroups && !cacheProtected)),
 					),
+					cacheProtected,
 				};
 			});
 		const currentCode = candidateByGroup.get(
@@ -168,6 +210,7 @@ export async function handleControl(
 				keyMode: deps.config.keyMode,
 				poolMaxGroups: deps.config.poolMaxGroups,
 				priceBand: deps.config.priceBand,
+				economyPolicy: deps.config.economyPolicy,
 				cacheIdleMs: deps.config.decision.cacheIdleMs,
 				blacklist: deps.config.blacklist,
 			},
@@ -207,6 +250,7 @@ export async function handleControl(
 		const allowed = [
 			"mode",
 			"priceBand",
+			"economyPolicy",
 			"blacklist",
 			"pollIntervalMs",
 			"samples",
@@ -214,6 +258,23 @@ export async function handleControl(
 		const merged: Record<string, unknown> = { ...deps.config };
 		for (const k of allowed) {
 			if (k in patch) merged[k] = patch[k];
+		}
+		if (
+			patch.priceBand &&
+			typeof patch.priceBand === "object" &&
+			!Array.isArray(patch.priceBand)
+		) {
+			merged.priceBand = { ...deps.config.priceBand, ...patch.priceBand };
+		}
+		if (
+			patch.economyPolicy &&
+			typeof patch.economyPolicy === "object" &&
+			!Array.isArray(patch.economyPolicy)
+		) {
+			merged.economyPolicy = {
+				...deps.config.economyPolicy,
+				...patch.economyPolicy,
+			};
 		}
 		const parsed = ConfigSchema.safeParse(merged);
 		if (!parsed.success) {

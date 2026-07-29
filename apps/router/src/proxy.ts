@@ -33,6 +33,7 @@ export interface ProxyDeps {
 const MAX_ERROR_BYTES = 16 * 1024;
 const MAX_RESPONSE_ID_BYTES = 16 * 1024;
 const MAX_USAGE_BYTES = 64 * 1024;
+const LOCAL_RESPONSE_HEADER = "x-aihub-auto-local-response";
 const SINGLE_REQUESTS = new WeakMap<ProxyDeps, Promise<void>>();
 
 interface ByteReader {
@@ -71,17 +72,6 @@ function safeClose(
 	}
 }
 
-function safeError(
-	controller: ReadableStreamDefaultController<Uint8Array>,
-	reason: unknown,
-): void {
-	try {
-		controller.error(reason);
-	} catch (err) {
-		if (!isControllerClosedError(err)) throw err;
-	}
-}
-
 const HOP_BY_HOP = new Set([
 	"connection",
 	"keep-alive",
@@ -95,6 +85,7 @@ const HOP_BY_HOP = new Set([
 	"content-length",
 	"authorization",
 	"x-api-key",
+	LOCAL_RESPONSE_HEADER,
 ]);
 
 export function detectPlatform(_path: string, _headers: Headers): Platform {
@@ -114,7 +105,43 @@ function upstreamFailure(status: number): boolean {
 function errorResponse(status: number, message: string): Response {
 	return new Response(
 		JSON.stringify({ error: { message, type: "aihub_auto_proxy" } }),
-		{ status, headers: { "Content-Type": "application/json" } },
+		{
+			status,
+			headers: {
+				"Content-Type": "application/json",
+				[LOCAL_RESPONSE_HEADER]: "1",
+			},
+		},
+	);
+}
+
+function downstreamHeaders(source: Headers, groupId: number): Headers {
+	const headers = new Headers();
+	source.forEach((value, name) => {
+		const lower = name.toLowerCase();
+		if (!HOP_BY_HOP.has(lower) && lower !== "content-encoding") {
+			headers.set(name, value);
+		}
+	});
+	headers.set("x-aihub-auto-group", String(groupId));
+	return headers;
+}
+
+function upstreamErrorResponse(
+	response: Response,
+	groupId: number,
+	message = `上游返回 HTTP ${response.status}(组 ${groupId})`,
+): Response {
+	const headers = downstreamHeaders(response.headers, groupId);
+	headers.set("Content-Type", "application/json");
+	headers.set(LOCAL_RESPONSE_HEADER, "1");
+	return new Response(
+		JSON.stringify({ error: { message, type: "upstream_error" } }),
+		{
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		},
 	);
 }
 
@@ -225,7 +252,11 @@ export async function handleProxy(
 	req: Request,
 	deps: ProxyDeps,
 ): Promise<Response> {
-	if (deps.keyMode !== "single") return handleProxyRequest(req, deps);
+	if (deps.keyMode !== "single") {
+		const response = await handleProxyRequest(req, deps);
+		response.headers.delete(LOCAL_RESPONSE_HEADER);
+		return response;
+	}
 	const previous = SINGLE_REQUESTS.get(deps) ?? Promise.resolve();
 	let unlock!: () => void;
 	const current = new Promise<void>((resolve) => {
@@ -242,32 +273,47 @@ export async function handleProxy(
 	};
 	try {
 		const response = await handleProxyRequest(req, deps);
+		if (response.headers.get(LOCAL_RESPONSE_HEADER) === "1") {
+			response.headers.delete(LOCAL_RESPONSE_HEADER);
+			finish();
+			return response;
+		}
 		if (!response.body) {
 			finish();
 			return response;
 		}
 		const reader = response.body.getReader();
 		let bodyClosed = false;
+		let completed = false;
 		const body = new ReadableStream<Uint8Array>({
-			async pull(controller) {
-				try {
-					const { done, value } = await reader.read();
-					if (bodyClosed) return;
-					if (done) {
-						bodyClosed = true;
-						finish();
-						safeClose(controller);
-					} else if (value && !safeEnqueue(controller, value)) {
-						bodyClosed = true;
+			start(controller) {
+				void (async () => {
+					try {
+						for (;;) {
+							const { done, value } = await reader.read();
+							if (bodyClosed) return;
+							if (done) {
+								completed = true;
+								bodyClosed = true;
+								safeClose(controller);
+								return;
+							}
+							if (value && !safeEnqueue(controller, value)) {
+								bodyClosed = true;
+								return;
+							}
+						}
+					} catch {
+						if (!bodyClosed) {
+							bodyClosed = true;
+							safeClose(controller);
+						}
+					} finally {
+						if (!completed)
+							await reader.cancel("downstream closed").catch(() => {});
 						finish();
 					}
-				} catch (err) {
-					finish();
-					if (!bodyClosed) {
-						bodyClosed = true;
-						safeError(controller, err);
-					}
-				}
+				})().catch(finish);
 			},
 			async cancel(reason) {
 				bodyClosed = true;
@@ -345,6 +391,10 @@ async function handleProxyRequest(
 	req.headers.forEach((value, name) => {
 		if (!HOP_BY_HOP.has(name.toLowerCase())) headers.set(name, value);
 	});
+
+	// Bun fetch 会自动解压响应;请求 identity 并在响应侧移除编码声明,
+	// 防止把已解压字节伪装成 gzip 导致客户端二次解压。
+	headers.set("Accept-Encoding", "identity");
 
 	const failedGroups: number[] = [];
 	let trackedGroup = active.groupId;
@@ -477,25 +527,29 @@ async function handleProxyRequest(
 				continue;
 			}
 
-
 			if (context.model && (await isModelIncompatibleResponse(response))) {
 				deps.reportModelIncompatible(groupId, context.model);
 				deps.reportNeutral(groupId);
 				if (!failedGroups.includes(groupId)) failedGroups.push(groupId);
 				mayUpdateBinding = rollbackActive();
-				lastError = response;
+				lastError = upstreamErrorResponse(
+					response,
+					groupId,
+					`模型 ${context.model} 在上游组 ${groupId} 不可用`,
+				);
+				void response.body?.cancel().catch(() => {});
 				if (!retriable) break;
 				continue;
 			}
 			if (upstreamFailure(response.status)) {
 				finishTtfb();
+				lastError = upstreamErrorResponse(response, groupId);
 				void response.body?.cancel().catch(() => {});
 				deps.logger.warn(
 					`上游错误 ${response.status} group=${groupId} attempt=${attempt}`,
 				);
 				markFailure(groupId);
 				mayUpdateBinding = rollbackActive();
-				lastError = response;
 				if (!retriable) break;
 				continue;
 			}
@@ -504,11 +558,7 @@ async function handleProxyRequest(
 			const isCurrentBinding = active.isCurrentBinding;
 			active.rollback = undefined;
 
-			const outHeaders = new Headers();
-			response.headers.forEach((value, name) => {
-				if (!HOP_BY_HOP.has(name.toLowerCase())) outHeaders.set(name, value);
-			});
-			outHeaders.set("x-aihub-auto-group", String(groupId));
+			const outHeaders = downstreamHeaders(response.headers, groupId);
 
 			let sawFirstByte = false;
 			let outcomeRecorded = false;
@@ -581,48 +631,83 @@ async function handleProxyRequest(
 			}
 			const reader = upstreamReader ?? response.body.getReader();
 			let firstPending = upstreamReader ? prefetched : undefined;
-			let pipeClosed = false;
+			let sourceCompleted = false;
+			let streamSettled = false;
+			let downstreamClosed = false;
+			const settleNeutral = () => {
+				if (streamSettled) return;
+				streamSettled = true;
+				deps.reportNeutral(groupId);
+				endOnce();
+			};
+			const cancelUpstream = (reason: unknown) => {
+				downstreamClosed = true;
+				settleNeutral();
+				return reader.cancel(reason).catch(() => {});
+			};
+			const abortStream = () => {
+				void cancelUpstream(req.signal.reason ?? "client aborted");
+			};
+			if (req.signal.aborted) abortStream();
+			else req.signal.addEventListener("abort", abortStream, { once: true });
 			const piped = new ReadableStream<Uint8Array>({
-				async pull(streamController) {
-					try {
-						const { done, value } = firstPending ?? (await reader.read());
-						firstPending = undefined;
-						if (pipeClosed) return;
-						if (done) {
-							pipeClosed = true;
-							inspectResponseMetadata(new Uint8Array(), true);
-							recordSuccess();
-							endOnce();
-							safeClose(streamController);
-						} else if (value) {
-							recordFirstByte();
-							inspectResponseMetadata(value);
-							if (!safeEnqueue(streamController, value)) {
-								pipeClosed = true;
-								deps.logger.debug(`下游流已关闭,停止转发 group=${groupId}`);
-								deps.reportNeutral(groupId);
-								endOnce();
+				start(controller) {
+					void (async () => {
+						try {
+							for (;;) {
+								let part: { done: boolean; value?: Uint8Array };
+								try {
+									part = firstPending ?? (await reader.read());
+									firstPending = undefined;
+								} catch (err) {
+									if (
+										downstreamClosed ||
+										req.signal.aborted ||
+										isControllerClosedError(err)
+									) {
+										settleNeutral();
+									} else {
+										recordStreamFailure();
+										streamSettled = true;
+										endOnce();
+									}
+									safeClose(controller);
+									return;
+								}
+								if (downstreamClosed) return;
+								if (part.done) {
+									inspectResponseMetadata(new Uint8Array(), true);
+									recordSuccess();
+									sourceCompleted = true;
+									streamSettled = true;
+									endOnce();
+									safeClose(controller);
+									return;
+								}
+								if (part.value) {
+									recordFirstByte();
+									inspectResponseMetadata(part.value);
+									if (!safeEnqueue(controller, part.value)) {
+										await cancelUpstream("downstream closed");
+										return;
+									}
+								}
+							}
+						} finally {
+							req.signal.removeEventListener("abort", abortStream);
+							if (!sourceCompleted && !downstreamClosed) {
+								settleNeutral();
 								await reader.cancel("downstream closed").catch(() => {});
 							}
-						}
-					} catch (err) {
-						if (pipeClosed || isControllerClosedError(err)) {
-							pipeClosed = true;
-							deps.reportNeutral(groupId);
 							endOnce();
-							return;
 						}
-						recordStreamFailure();
-						endOnce();
-						pipeClosed = true;
-						safeError(streamController, err);
-					}
+					})().catch(() => {
+						settleNeutral();
+						safeClose(controller);
+					});
 				},
-				async cancel(reason) {
-					pipeClosed = true;
-					deps.reportNeutral(groupId);
-					endOnce();
-					await reader.cancel(reason).catch(() => {});
+				cancel(reason) {
+					return cancelUpstream(reason);
 				},
 			});
 			return new Response(piped, {

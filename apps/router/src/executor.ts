@@ -31,8 +31,8 @@ export interface ExecutorDeps {
 	hardProtectedGroupIds?: () => ReadonlySet<number>;
 	/** 会话/Responses 亲和软保护;硬无效组可越过它回收。 */
 	softProtectedGroupIds?: () => ReadonlySet<number>;
-	/** 远端托管 Key 删除成功后同步清掉相关亲和记录。 */
-	onPoolKeyRemoved?: (groupId: number) => void;
+	/** 远端托管 Key 删除成功后的通知;仅强制回收需要清掉亲和。 */
+	onPoolKeyRemoved?: (groupId: number, forced: boolean) => void;
 	persistState: () => Promise<void>;
 	persistCredentials: () => Promise<void>;
 	/** 401 时由 daemon 注入的续期回调;成功返回 true */
@@ -207,7 +207,9 @@ export class RouteExecutor {
 	}
 
 	/** 定期收缩池;强无效组可越过会话软保护,删除成功后立即持久化。 */
-	async trimPool(forceReclaimGroupIds: ReadonlySet<number> = new Set()): Promise<number> {
+	async trimPool(
+		forceReclaimGroupIds: ReadonlySet<number> = new Set(),
+	): Promise<number> {
 		if (this.deps.keyMode !== "pool") return 0;
 		return this.serializePool(async () => {
 			const removed = await this.evictLru(undefined, forceReclaimGroupIds);
@@ -216,7 +218,7 @@ export class RouteExecutor {
 		});
 	}
 
-	/** 超容量按 LRU 收缩;强无效组过宽限期后即使有旧亲和也可回收。 */
+	/** 超容量立即按 LRU 收缩无保护 Key;强无效组过宽限期后可越过软保护。 */
 	private async evictLru(
 		protectGroupId?: number,
 		forceReclaimGroupIds: ReadonlySet<number> = new Set(),
@@ -233,16 +235,16 @@ export class RouteExecutor {
 		const grace = this.deps.evictionGraceMs ?? 0;
 		const now = Date.now();
 		let removed = 0;
+		const overCapacity =
+			Object.keys(state.pool).length > this.deps.poolMaxGroups;
 		const victims = Object.entries(state.pool)
 			.filter(([groupId, entry]) => {
 				const id = Number(groupId);
 				const forced = forceReclaimGroupIds.has(id);
 				return (
 					!isHardProtected(id) &&
-					now - entry.lastUsedAt >= grace &&
-					(forced ||
-						(Object.keys(state.pool).length > this.deps.poolMaxGroups &&
-							!isSoftProtected(id)))
+					((forced && now - entry.lastUsedAt >= grace) ||
+						(overCapacity && !isSoftProtected(id)))
 				);
 			})
 			.sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt);
@@ -258,7 +260,7 @@ export class RouteExecutor {
 			try {
 				await this.withAuth(() => this.deps.client.deleteKey(entry.keyId));
 				delete state.pool[groupId];
-				this.deps.onPoolKeyRemoved?.(id);
+				this.deps.onPoolKeyRemoved?.(id, forced);
 				removed++;
 				logger.info(
 					`${forced ? "池强制回收" : "池 LRU 删除"}:group=${groupId} keyId=${entry.keyId}`,

@@ -1,4 +1,9 @@
-import type { DecisionPolicy, ModeWeights, RoutingMode } from "./types.ts";
+import type {
+	DecisionPolicy,
+	EconomyPolicy,
+	ModeWeights,
+	RoutingMode,
+} from "./types.ts";
 
 export const MODE_WEIGHTS: Record<RoutingMode, ModeWeights> = {
 	economy: { priceWeight: 0.8, latencyWeight: 0.2 },
@@ -7,6 +12,12 @@ export const MODE_WEIGHTS: Record<RoutingMode, ModeWeights> = {
 };
 
 export const DEFAULT_PRICE_BAND = { min: 0, max: 0.15 };
+
+export const DEFAULT_ECONOMY_POLICY: EconomyPolicy = {
+	minOutcomeSamples: 3,
+	minSuccessRate: 0.8,
+	maxConservativeLatencyMs: 20_000,
+};
 
 /** 置信度下限,低于淘汰 */
 export const MIN_CONFIDENCE = 0.2;

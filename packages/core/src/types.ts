@@ -52,6 +52,15 @@ export interface ModeWeights {
 	latencyWeight: number;
 }
 
+export interface EconomyPolicy {
+	/** 达到该样本数后才启用稳定率门槛。 */
+	minOutcomeSamples: number;
+	/** 最近 3 小时最低成功率。 */
+	minSuccessRate: number;
+	/** 可进入价格层选择的最大保守 TTFT。 */
+	maxConservativeLatencyMs: number;
+}
+
 /** 反代实测得到的单组本地观测(由 LocalObservationStore 提供) */
 export interface LocalObservation {
 	groupId: number;
@@ -91,8 +100,12 @@ export interface ScoringOptions {
 	mode: RoutingMode;
 	/** 生效倍率硬约束区间(含边界) */
 	priceBand: { min: number; max: number };
-	/** groupId 黑名单(含 open 熔断排除) */
+	/** 用户明确配置的 groupId 黑名单。 */
 	blacklist: number[];
+	/** 熔断器冷却中的组;与用户黑名单分开呈现。 */
+	circuitOpenGroupIds?: readonly number[];
+	/** 省钱模式的显式健康门槛。 */
+	economyPolicy?: EconomyPolicy;
 	/** 账号实际可用分组;未取得时不限制 */
 	allowedGroupIds?: readonly number[];
 	/** 本地错误率淘汰阈值 */
@@ -109,10 +122,13 @@ export type ExcludeReason =
 	| "invalid_rate"
 	| "price_band"
 	| "blacklisted"
+	| "circuit_open"
 	| "invalid_latency"
 	| "local_error_rate"
-	/** economy 仅从最低有效倍率层路由;该层不可用时才自动升档。 */
-	| "economy_price_tier";
+	/** economy 最低价层近期结果不稳定,自动升到下一层。 */
+	| "economy_unstable"
+	/** economy 最低价层延迟极端,自动升到下一层。 */
+	| "economy_too_slow";
 
 export interface ScoredCandidate {
 	stat: GroupStat;
@@ -148,6 +164,17 @@ export interface ExcludedCandidate {
 	stat: GroupStat;
 	/** 已知时使用账号专属倍率,避免控制台回退为公开倍率。 */
 	effectiveRate?: number;
+	/** 进入 economy 健康门槛后被排除时保留的解释证据。 */
+	evidence?: Pick<
+		ScoredCandidate,
+		| "localConfidence"
+		| "localSampleCount"
+		| "outcomeSampleCount"
+		| "successRate"
+		| "confidence"
+		| "blendedTtftMs"
+		| "conservativeLatencyMs"
+	>;
 	excluded: true;
 	excludeReason: ExcludeReason;
 }
@@ -155,7 +182,10 @@ export interface ExcludedCandidate {
 export type EvaluatedCandidate = ScoredCandidate | ExcludedCandidate;
 
 export interface Evaluation {
+	/** 当前模式直接参与路由的候选。 */
 	eligible: ScoredCandidate[];
+	/** economy 下健康可用但价格更高的升档候选。 */
+	standby: ScoredCandidate[];
 	excluded: ExcludedCandidate[];
 	/** 最低有效倍率(基准),无候选时 undefined */
 	minimumRate?: number;

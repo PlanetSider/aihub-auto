@@ -42,7 +42,7 @@ describe("executor 模式 single", () => {
 });
 
 describe("executor 模式 pool", () => {
-	function poolHarness(poolMaxGroups = 3): Harness {
+	function poolHarness(poolMaxGroups = 3, cacheIdleMs = 0): Harness {
 		return createHarness({
 			configPatch: {
 				keyMode: "pool",
@@ -50,7 +50,7 @@ describe("executor 模式 pool", () => {
 				decision: {
 					stickiness: 0.1,
 					cachePenaltyMax: 0.25,
-					cacheIdleMs: 0,
+					cacheIdleMs,
 					minDwellMs: 0,
 				},
 			},
@@ -102,24 +102,33 @@ describe("executor 模式 pool", () => {
 		expect(Object.keys(h.state.pool).sort()).toEqual(["2", "3"]);
 	});
 
-	test("会话保护组允许池软超限", async () => {
-		h = poolHarness(1);
+	test("缓存窗口不让无亲和 Key 突破池上限", async () => {
+		h = poolHarness(1, 60_000);
+		await h.executor.ensureKey(1);
+		await h.executor.ensureKey(2);
+		expect(Object.keys(h.state.pool)).toEqual(["2"]);
+	});
+
+	test("近期缓存亲和允许池短暂软超限", async () => {
+		h = poolHarness(1, 60_000);
 		await h.executor.ensureKey(1);
 		h.affinity.bind("session", 1);
 		await h.executor.ensureKey(2);
 		expect(Object.keys(h.state.pool).sort()).toEqual(["1", "2"]);
 	});
 
-	test("会话过期后定期回收旧 Key,无需等待创建下一把", async () => {
-		h = poolHarness(1);
+	test("缓存窗口结束后回收旧 Key,但保留会话映射供按需重建", async () => {
+		h = poolHarness(1, 60_000);
 		await h.executor.ensureKey(1);
 		h.affinity.bind("session", 1);
 		await h.executor.ensureKey(2);
-		h.state.pool["1"]!.lastUsedAt = 0;
-		h.affinity.prune(Date.now() + h.config.sessionTtlMs + 1);
+		const expiredAt = Date.now() - 60_001;
+		h.state.pool["1"]!.lastUsedAt = expiredAt;
+		Object.values(h.state.sessions)[0]!.lastUsedAt = expiredAt;
 
 		expect(await h.executor.trimPool()).toBe(1);
 		expect(Object.keys(h.state.pool)).toEqual(["2"]);
+		expect(h.affinity.resolve("session")).toBe(1);
 		expect([...h.mock.keys.values()].map((key) => key.name)).toEqual([
 			"aihub-auto-g2",
 		]);
