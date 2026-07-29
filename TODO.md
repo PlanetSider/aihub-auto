@@ -20,7 +20,7 @@
 - [x] Enforce `poolMaxGroups` immediately for unprotected idle keys; only current/creating/reserved/in-flight/cache-hot affinity may cause explicit soft overcapacity.
 - [x] Eliminate the compiled-Bun `Controller is already closed` failure: terminal retry errors are local readable responses, real TCP cancellation reaches a single serialized stream pump, and deployed PID 35532 remains clean after live disconnect/failover probes.
 - [x] Re-run all tests plus compiled Windows terminal-error, `/v1/models` compression, and raw TCP stream-cancel stress before release.
-- [ ] Publish the routing/console release to GitHub `v0.2.2` (`v0.2.1` is already public).
+- [x] Publish the routing/console release to GitHub `v0.2.2` with six platform archives (`v0.2.1` remains immutable).
 
 ## Stability follow-up
 
