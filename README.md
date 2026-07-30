@@ -79,7 +79,7 @@ AIHUB_AUTO_PORT=9000 ./aihub-auto
 
 其中 `config.json` 保存路由配置和会话状态，`app.log` 记录脱敏运行日志，`crash.log` 记录启动、退出和异常事件，均会自动轮转。可通过 `AIHUB_AUTO_CONFIG_DIR` 指定其他目录。
 
-默认只监听 `127.0.0.1`。如需监听局域网地址，必须设置 `proxyToken` 和 `uiPassword`；客户端随后以 `OPENAI_API_KEY=<proxyToken>` 访问代理。公网部署应在可信反向代理和 TLS 后运行。
+默认只监听 `127.0.0.1`。如需监听局域网地址，必须设置 `proxyToken` 和 `uiPassword`；客户端随后以 `OPENAI_API_KEY=<proxyToken>` 访问代理。公网部署应在可信反向代理和 TLS 后运行，并让代理保留原始 Host、设置 `X-Forwarded-Proto`。
 
 完整配置项、池回收规则和安全边界见 [router 使用说明](apps/router/README.md)。
 

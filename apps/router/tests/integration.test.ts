@@ -493,4 +493,40 @@ describe("浏览器请求边界", () => {
 			).toBeUndefined();
 		}
 	});
+
+	test("TLS 反向代理只接受受限 forwarded proto 的同 Host Origin", () => {
+		h = createHarness({
+			configPatch: {
+				listen: { host: "0.0.0.0", port: 8787 },
+				proxyToken: "proxy-token-123456",
+				uiPassword: "console-pass-123",
+			},
+		});
+		const proxied = new Request("http://router.example/ctl/status", {
+			headers: {
+				Origin: "https://router.example",
+				"X-Forwarded-Proto": "https",
+			},
+		});
+		expect(browserRequestProblem(proxied, h.config)).toBeUndefined();
+		expect(
+			browserRequestProblem(
+				new Request("http://router.example/ctl/status", {
+					headers: { Origin: "https://router.example" },
+				}),
+				h.config,
+			),
+		).toMatchObject({ status: 403 });
+		expect(
+			browserRequestProblem(
+				new Request("http://router.example/ctl/status", {
+					headers: {
+						Origin: "https://attacker.example",
+						"X-Forwarded-Proto": "https",
+					},
+				}),
+				h.config,
+			),
+		).toMatchObject({ status: 403 });
+	});
 });

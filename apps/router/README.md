@@ -87,4 +87,4 @@ Linux x64 发行包采用 Bun 的 `bun-linux-x64-baseline` 目标，支持不具
 - 默认仅监听 127.0.0.1,凭据仅存本机(POSIX 下 0600),日志脱敏;`/ctl/status` 只返回 Key 元数据,不返回 `sk`
 - 配置目录内 `app.log` 默认记录运行日志(5 MiB × 当前+3 个历史),`crash.log` 记录生命周期和未处理异常(1 MiB × 当前+3 个历史)。直接双击 Windows EXE 使用 `%LocalAppData%\\aihub-auto`;通过 `AIHUB_AUTO_CONFIG_DIR` 可显式指定其他目录
 - 监听 `0.0.0.0` 时强制要求 `proxyToken` + `uiPassword`,否则拒绝启动(防止别人烧你的额度);客户端此时用 `OPENAI_API_KEY=<proxyToken>` 访问
-- 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用
+- 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用;反向代理需保留原始 Host,并设置 `X-Forwarded-Proto` 为外部协议

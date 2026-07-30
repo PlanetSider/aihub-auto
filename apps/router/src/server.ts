@@ -72,7 +72,16 @@ export function browserRequestProblem(
 		return { status: 421, error: "请求主机与本机监听地址不匹配" };
 	}
 	const origin = req.headers.get("origin");
-	if (origin !== null && origin !== url.origin) {
+	const acceptedOrigins = new Set([url.origin]);
+	const forwardedProto = req.headers
+		.get("x-forwarded-proto")
+		?.split(",", 1)[0]
+		?.trim()
+		.toLowerCase();
+	if (forwardedProto === "http" || forwardedProto === "https") {
+		acceptedOrigins.add(`${forwardedProto}://${url.host}`);
+	}
+	if (origin !== null && !acceptedOrigins.has(origin)) {
 		return { status: 403, error: "拒绝跨站浏览器请求" };
 	}
 	if (req.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") {

@@ -47,7 +47,9 @@ before UI, control, health, or proxy routing:
   be `127.0.0.1`, `[::1]`, or `localhost`. This rejects DNS rebinding requests
   whose `Host` resolves to loopback but names an attacker-controlled domain.
 - If an `Origin` header is present, it must exactly equal the request URL
-  origin. `Origin: null` and cross-origin values are rejected.
+  origin. A reverse proxy may supply a single `X-Forwarded-Proto` value of
+  `http` or `https`; in that case the same request Host with that scheme is
+  also accepted. `Origin: null` and cross-host values are rejected.
 - `Sec-Fetch-Site: cross-site` is rejected even when an intermediary strips or
   rewrites `Origin`.
 - Requests without browser provenance headers remain accepted. OpenAI SDKs,
@@ -154,4 +156,3 @@ local smoke tests, and the remote Docker compatibility matrix.
   risk, and exact code locations.
 - A reviewable branch pushed to GitHub and a pull request against
   `WSXYT/aihub-auto:main`.
-
