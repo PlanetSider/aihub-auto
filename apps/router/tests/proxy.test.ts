@@ -55,6 +55,18 @@ describe("反代基础", () => {
 		expect(body.error.message).toContain("没有可用分组");
 	});
 
+	test("未知长度请求体超过重试缓冲上限时返回 413", async () => {
+		h = createHarness();
+		const req = new Request("http://localhost/v1/chat/completions", {
+			method: "POST",
+			body: "12345",
+		});
+		expect(req.headers.get("content-length")).toBeNull();
+		const res = await handleProxy(req, { ...h.proxyDeps, maxBufferBytes: 4 });
+		expect(res.status).toBe(413);
+		expect(await res.text()).toContain("请求体超过重试缓冲上限");
+	});
+
 	test("正常转发:注入池 Key,响应带 x-aihub-auto-group,TTFT 入观测", async () => {
 		h = await setupRouted();
 		const res = await handleProxy(proxyReq(), h.proxyDeps);
@@ -91,6 +103,71 @@ describe("反代基础", () => {
 		);
 		const upstream = h.mock.requestLog.filter((r) => r.path.startsWith("/v1/"));
 		expect(upstream.at(-1)!.auth).toStartWith("Bearer sk-mock-");
+	});
+
+	test("远端已删 managed Key 返回 401 时原组重建并重试", async () => {
+		h = await setupRouted();
+		const oldEntry = { ...h.state.pool["1"]! };
+		h.mock.keys.delete(oldEntry.keyId);
+		const authorizations: string[] = [];
+		h.proxyDeps.fetch = (async (_input, init) => {
+			const authorization =
+				new Headers(init?.headers).get("authorization") ?? "";
+			authorizations.push(authorization);
+			const sk = authorization.replace(/^Bearer\s+/i, "");
+			const valid = [...h.mock.keys.values()].some((key) => key.key === sk);
+			return valid
+				? new Response(JSON.stringify({ group: 1 }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					})
+				: new Response(null, { status: 401 });
+		}) as typeof fetch;
+
+		const res = await handleProxy(
+			sessionReq("deleted-managed-key"),
+			h.proxyDeps,
+		);
+		expect(res.status).toBe(200);
+		expect(await res.json()).toEqual({ group: 1 });
+		expect(authorizations).toHaveLength(2);
+		expect(authorizations[1]).not.toBe(authorizations[0]);
+		expect(h.state.pool["1"]?.keyId).not.toBe(oldEntry.keyId);
+	});
+
+	test("自定义 User-Agent 覆盖初次与重试请求,留空时保留客户端值", async () => {
+		h = await setupRouted({ upstreamUserAgent: "BenefitClient/2.0" });
+		h.mock.behavior.groups.set(1, { status: 500 });
+		const retried = await handleProxy(
+			proxyReq("/v1/chat/completions", {
+				headers: {
+					"Content-Type": "application/json",
+					"User-Agent": "Caller/1.0",
+				},
+			}),
+			h.proxyDeps,
+		);
+		expect(retried.status).toBe(200);
+		const attempts = h.mock.requestLog.filter((entry) =>
+			entry.path.startsWith("/v1/"),
+		);
+		expect(attempts.length).toBeGreaterThanOrEqual(2);
+		expect(
+			attempts.every((entry) => entry.userAgent === "BenefitClient/2.0"),
+		).toBe(true);
+
+		h.config.upstreamUserAgent = "";
+		h.mock.behavior.groups.clear();
+		await handleProxy(
+			proxyReq("/v1/chat/completions", {
+				headers: {
+					"Content-Type": "application/json",
+					"User-Agent": "Caller/2.0",
+				},
+			}),
+			h.proxyDeps,
+		);
+		expect(h.mock.requestLog.at(-1)?.userAgent).toBe("Caller/2.0");
 	});
 
 	test("SSE 流式直通", async () => {
@@ -627,6 +704,60 @@ describe("single 兼容模式", () => {
 		const second = await secondPending;
 		expect(second.headers.get("x-aihub-auto-group")).toBe("2");
 		await second.text();
+		expect(h.mock.keys.get(1)?.group_id).toBe(2);
+	});
+
+	test("长流期间控制台锁定等待流结束,不会中途改共享 Key", async () => {
+		h = createHarness({
+			withServer: true,
+			configPatch: { keyMode: "single", mode: "balanced" },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.03, avgTtftMs: 1000 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.05, avgTtftMs: 2000 }),
+		];
+		h.mock.keys.set(1, {
+			id: 1,
+			name: "shared",
+			key: "sk-single",
+			group_id: 1,
+		});
+		await h.daemon.runOnce();
+
+		let finish!: () => void;
+		const streamGate = new Promise<void>((resolve) => {
+			finish = resolve;
+		});
+		h.proxyDeps.fetch = (async () =>
+			new Response(
+				new ReadableStream<Uint8Array>({
+					async start(controller) {
+						controller.enqueue(new TextEncoder().encode("open"));
+						await streamGate;
+						controller.close();
+					},
+				}),
+			)) as unknown as typeof fetch;
+
+		const response = await handleProxy(proxyReq(), h.proxyDeps);
+		const body = response.text();
+		let lockResolved = false;
+		const lockRequest = fetch(`${h.serverUrl}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: 2, expectedRevision: 0 }),
+		}).then((result) => {
+			lockResolved = true;
+			return result;
+		});
+		await Bun.sleep(20);
+		expect(lockResolved).toBe(false);
+		expect(h.mock.keys.get(1)?.group_id).toBe(1);
+
+		finish();
+		expect(await body).toBe("open");
+		const locked = await lockRequest;
+		expect(locked.status).toBe(200);
 		expect(h.mock.keys.get(1)?.group_id).toBe(2);
 	});
 });

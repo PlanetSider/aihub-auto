@@ -1,6 +1,6 @@
 # koishi-plugin-aihub-auto
 
-查询 [AIHub](https://aihub.top) 当前最优或最烂分组。插件只读取公开统计并回复排名,**不会修改 AIHub Key 或执行切组**。
+查询 [AIHub](https://aihub.top) 当前最优或最烂分组。插件只读取公开 usage-stats、官网真实用户平均 TTFT 与云端探测并回复排名,**不会修改 AIHub Key 或执行切组**。
 
 群里发 `最优分组` 或 `/最优分组`,机器人回复:
 
@@ -24,8 +24,8 @@ AIHub 当前最烂分组
 
 - 最优条数**自适应 1~6 条**:分数接近就多列,断层就只列头部
 - 最烂固定只发 **1 条**:有效候选中倍率最高优先,同倍率则保守首字延迟最慢优先
-- 只比较倍率在 `maxRate` 内且具有有效 TTFT 的候选;不会把无效数据当作“最烂”
-- 评分算法与 [aihub-auto](https://github.com/WSXYT/aihub-auto) 自动路由应用同源:置信度加权、保守延迟修正、价格与首字延迟三种策略
+- 只比较倍率在 `maxRate` 内、官网 provider 当前可用且具有有效 TTFT 的候选;即使 usage-stats 仍有历史/残留样本,`available=false` 的分组也不会推荐
+- 评分算法与 [aihub-auto](https://github.com/WSXYT/aihub-auto) 自动路由应用同源:官网用户/云端探测几何融合、保守延迟修正、价格与首字延迟三种策略
 - `economy` 只约束最优推荐;最烂查询仍覆盖 `maxRate` 内全部有效倍率层
 - 仅查询 AIHub 当前提供的 OpenAI 分组
 

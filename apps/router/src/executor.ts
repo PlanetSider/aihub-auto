@@ -10,6 +10,8 @@ export interface ActiveKey {
 	groupId: number;
 	/** 请求开始计入 TrafficTracker 后释放 Key 逐出保护。 */
 	release?: () => void;
+	/** pool 模式上游拒绝当前 sk 时,仅在记录仍匹配时将其作废。 */
+	invalidateCredential?: () => Promise<boolean>;
 	/** 本次候选在首字节前失败时恢复原会话绑定。 */
 	rollback?: () => void;
 	/** 已提交响应随后断流时,仅清除仍属于本请求版本的绑定。 */
@@ -151,11 +153,40 @@ export class RouteExecutor {
 			else this.reservations.delete(groupId);
 		};
 		try {
-			return { ...(await this.ensureKey(groupId)), release };
+			const key = await this.ensureKey(groupId);
+			return {
+				...key,
+				release,
+				invalidateCredential:
+					this.deps.keyMode === "pool"
+						? () => this.invalidatePoolKey(groupId, key.sk)
+						: undefined,
+			};
 		} catch (err) {
 			release();
 			throw err;
 		}
+	}
+
+	/**
+	 * 上游 401 说明请求用的 managed sk 已失效。expectedSk 是 CAS 保护,
+	 * 防止旧请求删掉另一并发请求刚创建的新 Key。
+	 */
+	async invalidatePoolKey(
+		groupId: number,
+		expectedSk: string,
+	): Promise<boolean> {
+		if (this.deps.keyMode !== "pool") return false;
+		return this.serializePool(async () => {
+			const entry = this.deps.state.pool[String(groupId)];
+			if (!entry || entry.sk !== expectedSk) return false;
+			delete this.deps.state.pool[String(groupId)];
+			this.deps.logger.warn(
+				`池 Key 被上游拒绝,本地作废并重建:group=${groupId} keyId=${entry.keyId}`,
+			);
+			await this.deps.persistState();
+			return true;
+		});
 	}
 
 	/** 控制面切换默认组。pool 中只更新默认值,不会改动其他会话绑定。 */
@@ -275,29 +306,17 @@ export class RouteExecutor {
 		return removed;
 	}
 
-	/** 启动对账:回收远端孤儿前缀 Key,绝不触碰用户 Key。 */
+	/**
+	 * 启动对账只清理本 state 的失效引用。未知远端前缀 Key 可能属于
+	 * 同账号的另一个运行实例,绝不能作为“孤儿”自动删除。
+	 */
 	async reconcile(): Promise<void> {
 		if (this.deps.keyMode !== "pool") return;
 		await this.serializePool(async () => {
 			const { state, logger } = this.deps;
 			const keys = await this.withAuth(() => this.deps.client.listAllKeys());
-			const known = new Set(
-				Object.values(state.pool).map((entry) => entry.keyId),
-			);
 			const remoteIds = new Set(keys.map((key) => key.id));
 
-			for (const key of keys) {
-				if (!key.name.startsWith(POOL_KEY_PREFIX) || known.has(key.id))
-					continue;
-				try {
-					await this.withAuth(() => this.deps.client.deleteKey(key.id));
-					logger.info(`回收孤儿 Key:${key.name}(id=${key.id})`);
-				} catch (err) {
-					logger.warn(
-						`孤儿 Key 回收失败:id=${key.id} ${err instanceof Error ? err.message : ""}`,
-					);
-				}
-			}
 			for (const [groupId, entry] of Object.entries(state.pool)) {
 				if (!remoteIds.has(entry.keyId)) {
 					delete state.pool[groupId];

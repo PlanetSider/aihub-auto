@@ -29,9 +29,23 @@ function clamp01(value: number): number {
 	return Math.min(Math.max(value, 0), 1);
 }
 
+function positive(value: number | undefined): number | undefined {
+	return value !== undefined && Number.isFinite(value) && value > 0
+		? value
+		: undefined;
+}
+
+function geometricMean(values: readonly number[]): number | undefined {
+	if (values.length === 0) return undefined;
+	if (values.length === 1) return values[0];
+	return Math.exp(
+		values.reduce((total, value) => total + Math.log(value), 0) / values.length,
+	);
+}
+
 /**
- * 硬约束 + 云端/本地加权融合 + 失败/尾延迟风险修正。
- * 无本地 TTFT 时只用云端;有本地样本时按实时置信度加权。
+ * 硬约束 + 官网用户/云端探测/本地三源对数融合 + 失败/尾延迟风险修正。
+ * 缺失来源不占权重;本地证据按实时置信度逐步接管上游基线。
  */
 export function evaluate(
 	stats: GroupStat[],
@@ -51,6 +65,11 @@ export function evaluate(
 		stat: GroupStat;
 		rate: number;
 		publicConfidence: number;
+		cloudProbeTtftMs?: number;
+		userTtftMs?: number;
+		userSampleCount: number;
+		upstreamTtftMs?: number;
+		localTtftMs?: number;
 		localConfidence: number;
 		localSampleCount: number;
 		outcomeSampleCount: number;
@@ -67,6 +86,11 @@ export function evaluate(
 	): ExcludedCandidate => ({
 		...exclude(candidate.stat, reason, candidate.rate),
 		evidence: {
+			cloudProbeTtftMs: candidate.cloudProbeTtftMs,
+			userTtftMs: candidate.userTtftMs,
+			userSampleCount: candidate.userSampleCount,
+			upstreamTtftMs: candidate.upstreamTtftMs,
+			localTtftMs: candidate.localTtftMs,
 			localConfidence: candidate.localConfidence,
 			localSampleCount: candidate.localSampleCount,
 			outcomeSampleCount: candidate.outcomeSampleCount,
@@ -82,7 +106,10 @@ export function evaluate(
 			excluded.push(exclude(stat, "platform_mismatch"));
 			continue;
 		}
-		if (allowed && !allowed.has(stat.groupId)) {
+		if (
+			stat.providerAvailable === false ||
+			(allowed && !allowed.has(stat.groupId))
+		) {
 			excluded.push(exclude(stat, "unavailable_group"));
 			continue;
 		}
@@ -122,43 +149,58 @@ export function evaluate(
 			continue;
 		}
 
-		const publicLatencyValid =
-			Number.isFinite(stat.avgTtftMs) && stat.avgTtftMs > 0;
-		const publicConfidence = publicLatencyValid ? 1 : 0;
+		// 新 provider 用户均值与旧 usage-stats 是同类真实请求证据,只取一个,
+		// 避免把同一批用户请求重复计权。云端探测是独立来源。
+		const providerUserTtftMs = positive(stat.userAvgTtftMs);
+		const userTtftMs = providerUserTtftMs ?? positive(stat.avgTtftMs);
+		const userSampleCount =
+			providerUserTtftMs === undefined
+				? stat.sampleCount
+				: (stat.userSampleCount ?? 0);
+		const cloudProbeTtftMs = positive(stat.cloudProbeTtftMs);
+		const upstreamTtftMs = geometricMean(
+			[userTtftMs, cloudProbeTtftMs].filter(
+				(value): value is number => value !== undefined,
+			),
+		);
+		const publicConfidence = upstreamTtftMs === undefined ? 0 : 1;
 		const localSampleCount =
 			observation?.latencySampleCount ??
 			(observation?.ewmaTtftMs !== undefined ? observation.sampleCount : 0);
 		const localLatencyConfidence =
 			observation?.latencyConfidence ?? observation?.confidence ?? 0;
 		const localLatencyAvailable =
-			localSampleCount > 0 &&
-			observation?.ewmaTtftMs !== undefined &&
-			Number.isFinite(observation.ewmaTtftMs) &&
-			observation.ewmaTtftMs > 0;
+			localSampleCount > 0 && positive(observation?.ewmaTtftMs) !== undefined;
 		const localConfidence = localLatencyAvailable
 			? clamp01(localLatencyConfidence)
 			: 0;
 		const localRiskLatency = localLatencyAvailable
-			? (observation.peakEwmaTtftMs ??
-				0.7 * observation.ewmaTtftMs! +
-					0.3 * (observation.p90TtftMs ?? observation.ewmaTtftMs!))
+			? positive(
+					observation?.peakEwmaTtftMs ??
+						0.7 * observation!.ewmaTtftMs! +
+							0.3 * (observation!.p90TtftMs ?? observation!.ewmaTtftMs!),
+				)
 			: undefined;
 
 		if (
-			!publicLatencyValid &&
+			upstreamTtftMs === undefined &&
 			(localRiskLatency === undefined || localConfidence < MIN_CONFIDENCE)
 		) {
 			excluded.push(exclude(stat, "invalid_latency", rate));
 			continue;
 		}
 
-		const blendedTtftMs = publicLatencyValid
-			? localRiskLatency === undefined
-				? stat.avgTtftMs
-				: stat.avgTtftMs * (1 - localConfidence) +
-					localRiskLatency * localConfidence
-			: localRiskLatency!;
-		const confidence = publicLatencyValid ? publicConfidence : localConfidence;
+		const blendedTtftMs =
+			upstreamTtftMs === undefined
+				? localRiskLatency!
+				: localRiskLatency === undefined
+					? upstreamTtftMs
+					: Math.exp(
+							Math.log(upstreamTtftMs) * (1 - localConfidence) +
+								Math.log(localRiskLatency) * localConfidence,
+						);
+		const confidence =
+			upstreamTtftMs === undefined ? localConfidence : publicConfidence;
 		const errorRate = observation
 			? Math.min(0.95, observation.errorRate * clamp01(outcomeConfidence))
 			: 0;
@@ -169,6 +211,11 @@ export function evaluate(
 			stat,
 			rate,
 			publicConfidence,
+			cloudProbeTtftMs,
+			userTtftMs,
+			userSampleCount,
+			upstreamTtftMs,
+			localTtftMs: localRiskLatency,
 			localConfidence,
 			localSampleCount,
 			outcomeSampleCount,
@@ -211,10 +258,7 @@ export function evaluate(
 	const minimumRate = Math.min(
 		...priceCandidates.map((candidate) => candidate.rate),
 	);
-	const cheapest = priceCandidates.filter(
-		(candidate) => candidate.rate === minimumRate,
-	);
-	const baselinePre = cheapest.reduce((left, right) =>
+	const fastestPre = priceCandidates.reduce((left, right) =>
 		right.conservativeLatencyMs < left.conservativeLatencyMs ? right : left,
 	);
 	const weights = MODE_WEIGHTS[options.mode];
@@ -222,21 +266,35 @@ export function evaluate(
 
 	const scored: ScoredCandidate[] = priceCandidates.map((candidate) => {
 		const speedup =
-			baselinePre.conservativeLatencyMs / candidate.conservativeLatencyMs - 1;
+			fastestPre.conservativeLatencyMs / candidate.conservativeLatencyMs - 1;
 		const premium = zeroBase
 			? candidate.rate <= 0
 				? 0
 				: Number.POSITIVE_INFINITY
 			: (candidate.rate - minimumRate) / minimumRate;
+		const pricePenalty = zeroBase
+			? candidate.rate <= 0
+				? 0
+				: Number.POSITIVE_INFINITY
+			: Math.log(candidate.rate / minimumRate);
+		const latencyGain = Math.log(
+			fastestPre.conservativeLatencyMs / candidate.conservativeLatencyMs,
+		);
 		const score =
 			zeroBase && candidate.rate > 0
 				? Number.NEGATIVE_INFINITY
-				: weights.latencyWeight * speedup - weights.priceWeight * premium;
+				: weights.latencyWeight * latencyGain -
+					weights.priceWeight * pricePenalty;
 
 		return {
 			stat: candidate.stat,
 			effectiveRate: candidate.rate,
 			publicConfidence: candidate.publicConfidence,
+			cloudProbeTtftMs: candidate.cloudProbeTtftMs,
+			userTtftMs: candidate.userTtftMs,
+			userSampleCount: candidate.userSampleCount,
+			upstreamTtftMs: candidate.upstreamTtftMs,
+			localTtftMs: candidate.localTtftMs,
 			localConfidence: candidate.localConfidence,
 			localSampleCount: candidate.localSampleCount,
 			outcomeSampleCount: candidate.outcomeSampleCount,
@@ -265,9 +323,15 @@ export function evaluate(
 						left.conservativeLatencyMs - right.conservativeLatencyMs,
 				)
 		: [];
-	const baseline = eligible.find(
-		(candidate) => candidate.stat.groupId === baselinePre.stat.groupId,
-	);
+	const baseline = eligible
+		.filter((candidate) => Number.isFinite(candidate.score))
+		.reduce<ScoredCandidate | undefined>(
+			(best, candidate) =>
+				!best || candidate.conservativeLatencyMs < best.conservativeLatencyMs
+					? candidate
+					: best,
+			undefined,
+		);
 	return { eligible, standby, excluded, minimumRate, baseline };
 }
 

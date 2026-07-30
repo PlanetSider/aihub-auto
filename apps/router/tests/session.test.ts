@@ -75,6 +75,16 @@ describe("requestRoutingContext", () => {
 	});
 });
 
+describe("StateSchema", () => {
+	test("手动锁定默认关闭且 revision 在序列化后保留", () => {
+		const initial = StateSchema.parse({});
+		expect(initial.manualLock).toEqual({ groupId: null, revision: 0 });
+		initial.manualLock = { groupId: 7, revision: 3 };
+		const restored = StateSchema.parse(JSON.parse(JSON.stringify(initial)));
+		expect(restored.manualLock).toEqual({ groupId: 7, revision: 3 });
+	});
+});
+
 describe("SessionAffinity", () => {
 	test("CAS rebind 防止旧失败覆盖新绑定", () => {
 		const state = StateSchema.parse({});

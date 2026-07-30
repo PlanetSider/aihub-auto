@@ -23,7 +23,7 @@ import {
 	parseStartupOptions,
 	STARTUP_HELP,
 } from "./startup.ts";
-import { TrafficTracker } from "./traffic.ts";
+import { SingleKeyGate, TrafficTracker } from "./traffic.ts";
 
 async function main(): Promise<void> {
 	const startup = parseStartupOptions(process.argv.slice(2), process.env);
@@ -100,6 +100,7 @@ async function main(): Promise<void> {
 	const breaker = CircuitBreaker.fromJSON(state.breaker);
 	const observations = LocalObservationStore.fromJSON(state.observations);
 	const traffic = new TrafficTracker();
+	const singleKeyGate = new SingleKeyGate();
 	const persistState = async () => store.write("state.json", state);
 	let persistTimer: ReturnType<typeof setTimeout> | undefined;
 	const persistStateSoon = () => {
@@ -131,8 +132,13 @@ async function main(): Promise<void> {
 		poolMaxGroups: config.poolMaxGroups,
 		evictionGraceMs: config.decision.cacheIdleMs,
 		hardProtectedGroupIds: () => traffic.activeGroupIds(),
-		softProtectedGroupIds: () =>
-			affinity.protectedGroupIds(config.decision.cacheIdleMs),
+		softProtectedGroupIds: () => {
+			const groups = affinity.protectedGroupIds(config.decision.cacheIdleMs);
+			if (state.manualLock.groupId !== null) {
+				groups.add(state.manualLock.groupId);
+			}
+			return groups;
+		},
 		onPoolKeyRemoved: (groupId, forced) => {
 			if (forced) affinity.forgetGroup(groupId);
 		},
@@ -169,6 +175,7 @@ async function main(): Promise<void> {
 		observations,
 		affinity,
 		traffic,
+		singleKeyGate,
 		logger,
 		audit,
 		persistState,
@@ -190,9 +197,11 @@ async function main(): Promise<void> {
 		affinity,
 		observations,
 		traffic,
+		singleKeyGate,
 		logger,
 		ttfbTimeoutMs: config.ttfbTimeoutMs,
 		proxyToken: config.proxyToken,
+		upstreamUserAgent: () => config.upstreamUserAgent,
 	};
 
 	let server: ReturnType<typeof createServer>;
@@ -208,6 +217,7 @@ async function main(): Promise<void> {
 			store,
 			logger,
 			persistConfig,
+			persistState,
 			persistCredentials,
 		});
 	} catch (err) {

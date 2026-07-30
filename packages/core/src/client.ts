@@ -4,6 +4,7 @@ import type {
 	GroupInfo,
 	GroupStat,
 	Platform,
+	ProviderLatencyStat,
 	UsageStatsPage,
 } from "./types.ts";
 
@@ -67,6 +68,73 @@ export function parseGroupStat(raw: unknown): GroupStat | undefined {
 		lastSampleAt: str(r["last_sample_at"] ?? r["lastSampleAt"]),
 		groupId,
 	};
+}
+
+function positive(v: unknown): number | undefined {
+	const value = num(v);
+	return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+export function parseProviderLatencyStat(
+	raw: unknown,
+): ProviderLatencyStat | undefined {
+	const r = asRecord(raw);
+	const platform = str(r["platform"]);
+	if (platform !== "openai") return undefined;
+	const groupId = num(r["group_id"] ?? r["groupId"]);
+	if (!Number.isFinite(groupId)) return undefined;
+	const available =
+		typeof r["available"] === "boolean" ? r["available"] : undefined;
+	const probe =
+		available === false
+			? undefined
+			: [
+					r["probe_e2e_ttft_ms"],
+					r["probeE2eTtftMs"],
+					r["probe_ttft_ms"],
+					r["probeTtftMs"],
+				]
+					.map(positive)
+					.find((value) => value !== undefined);
+	const userHasData = r["user_has_data"] ?? r["userHasData"];
+	const userAvgTtftMs =
+		userHasData === false
+			? undefined
+			: positive(r["user_avg_ttft_ms"] ?? r["userAvgTtftMs"]);
+	return {
+		groupId,
+		platform,
+		available,
+		cloudProbeTtftMs: probe,
+		userAvgTtftMs,
+		userSampleCount:
+			userAvgTtftMs === undefined
+				? 0
+				: Math.max(
+						0,
+						Math.floor(
+							num(r["user_sample_count"] ?? r["userSampleCount"]) || 0,
+						),
+					),
+	};
+}
+
+export function mergeProviderLatencies(
+	stats: readonly GroupStat[],
+	providers: ReadonlyMap<number, ProviderLatencyStat>,
+): GroupStat[] {
+	return stats.map((stat) => {
+		const provider = providers.get(stat.groupId);
+		return provider
+			? {
+					...stat,
+					providerAvailable: provider.available,
+					cloudProbeTtftMs: provider.cloudProbeTtftMs,
+					userAvgTtftMs: provider.userAvgTtftMs,
+					userSampleCount: provider.userSampleCount,
+				}
+			: stat;
+	});
 }
 
 function parseApiKey(raw: unknown): ApiKeyInfo {
@@ -222,6 +290,26 @@ export class AIHubClient {
 			total: num(data["total"]) || items.length,
 			sampleLimit: num(data["sample_limit"]) || samples,
 		};
+	}
+
+	/** 官网云端探测 + 真实用户平均 TTFT;调用方可在接口不可用时回退 usage-stats。 */
+	async getProviderLatencyStats(
+		platform: Platform,
+	): Promise<Map<number, ProviderLatencyStat>> {
+		const data = asRecord(
+			await this.request("GET", "/api/v1/public/providers"),
+		);
+		const rawItems = Array.isArray(data["items"])
+			? (data["items"] as unknown[])
+			: [];
+		const providers = new Map<number, ProviderLatencyStat>();
+		for (const raw of rawItems) {
+			const provider = parseProviderLatencyStat(raw);
+			if (provider?.platform === platform) {
+				providers.set(provider.groupId, provider);
+			}
+		}
+		return providers;
 	}
 
 	// ---------- 账号接口 ----------

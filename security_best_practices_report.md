@@ -26,7 +26,7 @@ longer persists its password in browser storage.
   credential leakage.
 - Queried OSV on 2026-07-31 for all 174 exact npm package/version pairs parsed
   from `bun.lock`.
-- Ran 170 Bun tests with 507 assertions and TypeScript checking on Bun 1.3.14.
+- Ran 194 Bun tests with 626 assertions and TypeScript checking on Bun 1.3.14.
 - Built the Linux x64 release with `bun-linux-x64-baseline` and ran old-userland
   compatibility probes on the supplied Docker host.
 
@@ -182,7 +182,7 @@ by this glibc release artifact.
 ## Verification Notes
 
 - `bun install --frozen-lockfile`: pass with Bun 1.3.14.
-- `bun test`: 170 pass, 0 fail, 507 assertions.
+- `bun test`: 194 pass, 0 fail, 626 assertions.
 - `bunx tsc --noEmit -p tsconfig.json`: pass.
 - `bun scripts/build.ts linux-x64`: pass on the supplied Linux host.
 - Baseline artifact `--help` and non-default-port health smoke tests: pass.

@@ -25,23 +25,39 @@ class StatsServer {
 				this.hits++;
 				if (this.fail) return new Response("boom", { status: 500 });
 				const url = new URL(req.url);
+				const providerRequest = url.pathname.endsWith("/public/providers");
 				const platform = url.searchParams.get("platform");
 				const items = this.stats
-					.filter((s) => s.platform === platform)
-					.map((s) => ({
-						code: s.code,
-						platform: s.platform,
-						rate_multiplier: s.rateMultiplier,
-						avg_ttft_ms: s.avgTtftMs,
-						sample_count: s.sampleCount,
-						last_sample_at: s.lastSampleAt,
-						group_id: s.groupId,
-					}));
+					.filter((s) => providerRequest || s.platform === platform)
+					.map((s) =>
+						providerRequest
+							? {
+									code: s.code,
+									platform: s.platform,
+									group_id: s.groupId,
+									available: s.providerAvailable !== false,
+									probe_e2e_ttft_ms: s.cloudProbeTtftMs ?? null,
+									user_avg_ttft_ms: s.userAvgTtftMs ?? 0,
+									user_sample_count: s.userSampleCount ?? 0,
+									user_has_data: s.userAvgTtftMs !== undefined,
+								}
+							: {
+									code: s.code,
+									platform: s.platform,
+									rate_multiplier: s.rateMultiplier,
+									avg_ttft_ms: s.avgTtftMs,
+									sample_count: s.sampleCount,
+									last_sample_at: s.lastSampleAt,
+									group_id: s.groupId,
+								},
+					);
 				return new Response(
 					JSON.stringify({
 						code: 0,
 						message: "success",
-						data: { items, total: items.length, sample_limit: 100 },
+						data: providerRequest
+							? { generated_at: new Date().toISOString(), items }
+							: { items, total: items.length, sample_limit: 100 },
 					}),
 					{ headers: { "Content-Type": "application/json" } },
 				);
@@ -126,6 +142,25 @@ describe("触发与作用域", () => {
 			"最优分组",
 			/AIHub 当前推荐\n策略:测试策略\n1\. A001-Plus\/K12(#57)|0\.03x|9584 ms\n下载:https:\/\/github\.com\/WSXYT\/aihub-auto\/releases\/latest/,
 		);
+	});
+
+	test("usage 仍有快样本但 provider 已不可用的分组不会推荐", async () => {
+		f = await createApp();
+		f.upstream.stats = [
+			stat({
+				groupId: 48,
+				code: "A008-BugTeam",
+				rateMultiplier: 0.01,
+				avgTtftMs: 100,
+				providerAvailable: false,
+			}),
+			stat({ groupId: 49, code: "A009-Visible", avgTtftMs: 1000 }),
+		];
+		const text = (
+			await f.app.mock.client("user1", "100").receive("最优分组")
+		).join("\n");
+		expect(text).toContain("A009-Visible(#49)");
+		expect(text).not.toContain("A008-BugTeam(#48)");
 	});
 
 	test("『/最优分组』同样触发", async () => {

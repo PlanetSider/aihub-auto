@@ -20,7 +20,7 @@ import { AuditLog, Logger } from "../src/logger.ts";
 import type { ProxyDeps } from "../src/proxy.ts";
 import { createServer, type ServerDeps } from "../src/server.ts";
 import { SessionAffinity } from "../src/session.ts";
-import { TrafficTracker } from "../src/traffic.ts";
+import { SingleKeyGate, TrafficTracker } from "../src/traffic.ts";
 import { MockAIHub } from "./mock-upstream.ts";
 
 export interface Harness {
@@ -70,6 +70,7 @@ export function createHarness(opts?: {
 	const breaker = new CircuitBreaker();
 	const observations = new LocalObservationStore();
 	const traffic = new TrafficTracker();
+	const singleKeyGate = new SingleKeyGate();
 	const affinity = new SessionAffinity(
 		state,
 		config.sessionTtlMs,
@@ -91,8 +92,13 @@ export function createHarness(opts?: {
 		poolMaxGroups: config.poolMaxGroups,
 		evictionGraceMs: config.decision.cacheIdleMs,
 		hardProtectedGroupIds: () => traffic.activeGroupIds(),
-		softProtectedGroupIds: () =>
-			affinity.protectedGroupIds(config.decision.cacheIdleMs),
+		softProtectedGroupIds: () => {
+			const groups = affinity.protectedGroupIds(config.decision.cacheIdleMs);
+			if (state.manualLock.groupId !== null) {
+				groups.add(state.manualLock.groupId);
+			}
+			return groups;
+		},
 		onPoolKeyRemoved: (groupId, forced) => {
 			if (forced) affinity.forgetGroup(groupId);
 		},
@@ -120,6 +126,7 @@ export function createHarness(opts?: {
 		observations,
 		affinity,
 		traffic,
+		singleKeyGate,
 		logger,
 		audit,
 		persistState,
@@ -141,9 +148,11 @@ export function createHarness(opts?: {
 		affinity,
 		observations,
 		traffic,
+		singleKeyGate,
 		logger,
 		ttfbTimeoutMs: config.ttfbTimeoutMs,
 		proxyToken: config.proxyToken,
+		upstreamUserAgent: () => config.upstreamUserAgent,
 	};
 
 	let server: ReturnType<typeof createServer> | undefined;
@@ -160,6 +169,7 @@ export function createHarness(opts?: {
 			store,
 			logger,
 			persistConfig,
+			persistState,
 			persistCredentials,
 		};
 		config.listen.port = 0;

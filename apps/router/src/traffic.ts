@@ -1,5 +1,25 @@
 import type { TrafficSnapshot } from "@aihub-auto/core";
 
+/** single 模式共享 Key 的 FIFO 租约；pool 模式不使用，不限制同组并发。 */
+export class SingleKeyGate {
+	private tail: Promise<void> = Promise.resolve();
+
+	async acquire(): Promise<() => void> {
+		const previous = this.tail;
+		let unlock!: () => void;
+		this.tail = new Promise<void>((resolve) => {
+			unlock = resolve;
+		});
+		await previous;
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			unlock();
+		};
+	}
+}
+
 /** 反代流量跟踪:全局/分组在飞数、最近请求与 5 分钟滑窗。 */
 export class TrafficTracker {
 	private active = 0;
