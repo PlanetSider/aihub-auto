@@ -1,11 +1,11 @@
 /** 单文件控制台页面(内嵌构建,不引前端框架) */
-export const UI_HTML = `<!doctype html>
+const UI_TEMPLATE = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>aihub-auto 控制台</title>
-<style>
+<style nonce="__AIHUB_AUTO_NONCE__">
 :root{color-scheme:light;--bg:#f3f5f7;--panel:#fff;--fg:#182026;--muted:#68717a;--border:#d9dee3;--accent:#1769aa;--accent-hover:#115487;--ok:#147a45;--ok-bg:#eaf6ef;--warn:#955500;--warn-bg:#fff4df;--err:#bd2c2c;--err-bg:#fcecec;--neutral-bg:#edf0f2;--shadow:0 1px 2px #18202612}
 @media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#151718;--panel:#202325;--fg:#eef0f2;--muted:#a3abb2;--border:#3b4044;--accent:#66a8dc;--accent-hover:#8abde3;--ok:#58bd83;--ok-bg:#173a28;--warn:#e6ac55;--warn-bg:#443217;--err:#ee7777;--err-bg:#482323;--neutral-bg:#303438;--shadow:none}}
 *{box-sizing:border-box}html{background:var(--bg)}body{margin:0;font:14px/1.5 system-ui,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);letter-spacing:0}button,select,input{font:inherit;letter-spacing:0}button{min-height:34px;padding:6px 12px;border:1px solid transparent;border-radius:5px;background:var(--accent);color:#fff;cursor:pointer;font-weight:600}button:hover{background:var(--accent-hover)}button:disabled{cursor:wait;opacity:.58}.secondary{background:var(--panel);color:var(--accent);border-color:var(--accent)}.secondary:hover{background:var(--neutral-bg)}input,select{min-height:34px;padding:5px 9px;border:1px solid var(--border);border-radius:5px;background:var(--panel);color:var(--fg)}input[type=number]{width:84px}input[type=checkbox]{min-height:auto;accent-color:var(--accent)}label{color:var(--muted);font-size:12px}.shell{max-width:1280px;margin:0 auto;padding:18px}.appbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.brand{display:flex;align-items:baseline;gap:9px}.brand h1{font-size:20px;line-height:1.2;margin:0}.brand span{color:var(--muted);font-size:12px}.actions{display:flex;align-items:center;gap:8px}.status-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border);border-radius:6px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden;margin-bottom:14px}.metric{padding:12px 14px;border-right:1px solid var(--border);min-width:0}.metric:last-child{border-right:0}.metric-label{display:block;color:var(--muted);font-size:11px;text-transform:uppercase}.metric-value{display:block;margin-top:2px;font-size:16px;font-weight:650;overflow-wrap:anywhere}.metric-sub{display:block;color:var(--muted);font-size:12px;margin-top:1px;min-height:18px}.workspace{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(300px,.7fr);gap:14px}.panel{border:1px solid var(--border);border-radius:6px;background:var(--panel);box-shadow:var(--shadow);min-width:0}.panel.wide{grid-column:1/-1}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--border)}.panel-head h2{font-size:14px;margin:0}.panel-meta{color:var(--muted);font-size:12px}.panel-body{padding:13px 14px}.controls{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.field{display:grid;gap:3px}.field.grow{flex:1;min-width:150px}.range{display:flex;align-items:center;gap:6px}.decision{margin-top:10px;padding-top:9px;border-top:1px solid var(--border);color:var(--muted);font-size:12px;min-height:28px}.auth-grid{display:grid;grid-template-columns:1fr;gap:9px}.auth-row{display:flex;gap:8px}.auth-row input{min-width:0;flex:1}.auth-divider{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px}.auth-divider:before,.auth-divider:after{content:"";height:1px;background:var(--border);flex:1}.table-wrap{width:100%;overflow:auto}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap}th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600;z-index:1}tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:var(--neutral-bg)}td.num{text-align:right;font-variant-numeric:tabular-nums}.group-name{font-weight:650}.subtle{color:var(--muted)}.chips{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.chip{display:inline-flex;align-items:center;min-height:21px;padding:1px 6px;border-radius:3px;background:var(--neutral-bg);color:var(--fg);font-size:11px;font-weight:600}.chip.ok{background:var(--ok-bg);color:var(--ok)}.chip.warn{background:var(--warn-bg);color:var(--warn)}.chip.err{background:var(--err-bg);color:var(--err)}.empty{padding:24px;text-align:center;color:var(--muted)}#toast{position:fixed;right:18px;bottom:18px;max-width:min(420px,calc(100vw - 36px));padding:10px 13px;border-radius:5px;background:var(--fg);color:var(--bg);box-shadow:0 6px 20px #0003;opacity:0;transform:translateY(6px);pointer-events:none;transition:.18s}#toast.show{opacity:1;transform:none}
@@ -65,16 +65,16 @@ export const UI_HTML = `<!doctype html>
   </main>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
-<script>
+<script nonce="__AIHUB_AUTO_NONCE__">
 const $=s=>document.querySelector(s);
-let uiPass=localStorage.getItem("aihub-auto-pass")||"";
+let uiPass="";
 let lastStatus;
 const modeName={economy:"省钱优先",balanced:"均衡",speed:"速度优先"};
 const reasonName={platform_mismatch:"平台不匹配",unavailable_group:"账户不可用",invalid_rate:"倍率无效",price_band:"超出倍率区间",blacklisted:"已加入黑名单",circuit_open:"熔断冷却",invalid_latency:"延迟无效",local_error_rate:"近期稳定率过低",economy_unstable:"未达省钱稳定率",economy_too_slow:"超过省钱延迟上限"};
 function esc(value){return String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
 function hdrs(){const h={"Content-Type":"application/json"};if(uiPass)h["x-ui-password"]=uiPass;return h}
 function toast(message){const node=$("#toast");node.textContent=message;node.classList.add("show");clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.classList.remove("show"),2800)}
-async function api(path,opts){const res=await fetch(path,Object.assign({headers:hdrs()},opts));if(res.status===401){const pass=prompt("控制台口令:");if(pass!=null){uiPass=pass;localStorage.setItem("aihub-auto-pass",pass);return api(path,opts)}throw new Error("需要控制台口令")}const body=await res.json();if(!res.ok)throw new Error(body.error||String(res.status));return body}
+async function api(path,opts){const res=await fetch(path,Object.assign({headers:hdrs()},opts));if(res.status===401){const pass=prompt("控制台口令:");if(pass!=null){uiPass=pass;return api(path,opts)}throw new Error("需要控制台口令")}const body=await res.json();if(!res.ok)throw new Error(body.error||String(res.status));return body}
 function fmtScore(value){return typeof value==="number"&&Number.isFinite(value)?value.toFixed(3):"-"}
 function fmtDuration(ms){if(ms==null)return "-";if(ms<60_000)return Math.max(0,Math.round(ms/1000))+" 秒";if(ms<3_600_000)return Math.round(ms/60_000)+" 分钟";return Math.round(ms/3_600_000)+" 小时"}
 function chip(text,tone,title){return '<span class="chip '+(tone||"")+(title?'" title="'+esc(title):"")+'">'+esc(text)+"</span>"}
@@ -94,3 +94,10 @@ refresh();setInterval(()=>{if(document.visibilityState==="visible")refresh()},50
 </script>
 </body>
 </html>`;
+
+const NONCE_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+export function renderUi(nonce: string): string {
+	if (!NONCE_PATTERN.test(nonce)) throw new Error("非法 CSP nonce");
+	return UI_TEMPLATE.replaceAll("__AIHUB_AUTO_NONCE__", nonce);
+}

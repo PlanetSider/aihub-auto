@@ -5,7 +5,7 @@ import type { RouteDaemon } from "./daemon.ts";
 import type { RouteExecutor } from "./executor.ts";
 import { handleProxy, type ProxyDeps } from "./proxy.ts";
 import type { Logger } from "./logger.ts";
-import { UI_HTML } from "./ui.ts";
+import { renderUi } from "./ui.ts";
 
 export interface ServerDeps {
 	config: AppConfig;
@@ -24,7 +24,33 @@ export interface ServerDeps {
 function json(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
-		headers: { "Content-Type": "application/json" },
+		headers: {
+			"Cache-Control": "no-store",
+			"Content-Type": "application/json",
+		},
+	});
+}
+
+function uiResponse(): Response {
+	const nonce = crypto.randomUUID().replaceAll("-", "");
+	const csp = [
+		"default-src 'none'",
+		`script-src 'nonce-${nonce}'`,
+		`style-src 'nonce-${nonce}'`,
+		"connect-src 'self'",
+		"base-uri 'none'",
+		"form-action 'none'",
+		"frame-ancestors 'none'",
+		"object-src 'none'",
+	].join("; ");
+	return new Response(renderUi(nonce), {
+		headers: {
+			"Cache-Control": "no-store",
+			"Content-Security-Policy": csp,
+			"Content-Type": "text/html; charset=utf-8",
+			"Referrer-Policy": "no-referrer",
+			"X-Content-Type-Options": "nosniff",
+		},
 	});
 }
 
@@ -390,9 +416,7 @@ export function createServer(deps: ServerDeps): ReturnType<typeof Bun.serve> {
 			const path = url.pathname;
 
 			if (path === "/" || path === "/ui" || path === "/ui/") {
-				return new Response(UI_HTML, {
-					headers: { "Content-Type": "text/html; charset=utf-8" },
-				});
+				return uiResponse();
 			}
 			if (path.startsWith("/ctl/")) {
 				return handleControl(req, url, deps);

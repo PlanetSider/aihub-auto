@@ -414,7 +414,25 @@ describe("控制台 API", () => {
 		});
 		const ui = await fetch(`${base}/ui`);
 		expect(ui.status).toBe(200);
-		expect(await ui.text()).toContain("aihub-auto");
+		const html = await ui.text();
+		const csp = ui.headers.get("content-security-policy") ?? "";
+		const nonce = /script-src 'nonce-([^']+)'/.exec(csp)?.[1];
+		expect(nonce).toBeTruthy();
+		expect(csp).toContain("frame-ancestors 'none'");
+		expect(csp).not.toContain("'unsafe-inline'");
+		expect(html).toContain(`<style nonce="${nonce}">`);
+		expect(html).toContain(`<script nonce="${nonce}">`);
+		expect(ui.headers.get("cache-control")).toBe("no-store");
+		expect(ui.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(ui.headers.get("referrer-policy")).toBe("no-referrer");
+		expect(html).toContain("aihub-auto");
+		expect(html).not.toContain("localStorage");
+		expect(html).not.toContain("sessionStorage");
+
+		const ctl = await fetch(`${base}/ctl/status`, {
+			headers: { "x-ui-password": "console-pass-123" },
+		});
+		expect(ctl.headers.get("cache-control")).toBe("no-store");
 	});
 });
 
