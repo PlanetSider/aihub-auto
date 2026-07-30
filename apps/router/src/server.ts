@@ -28,6 +28,33 @@ function json(body: unknown, status = 200): Response {
 	});
 }
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function normalizedHostname(hostname: string): string {
+	return hostname.toLowerCase().replace(/^\[|\]$/g, "");
+}
+
+export function browserRequestProblem(
+	req: Request,
+	config: AppConfig,
+): { status: 403 | 421; error: string } | undefined {
+	const url = new URL(req.url);
+	if (
+		LOOPBACK_HOSTS.has(normalizedHostname(config.listen.host)) &&
+		!LOOPBACK_HOSTS.has(normalizedHostname(url.hostname))
+	) {
+		return { status: 421, error: "请求主机与本机监听地址不匹配" };
+	}
+	const origin = req.headers.get("origin");
+	if (origin !== null && origin !== url.origin) {
+		return { status: 403, error: "拒绝跨站浏览器请求" };
+	}
+	if (req.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") {
+		return { status: 403, error: "拒绝跨站浏览器请求" };
+	}
+	return undefined;
+}
+
 /** /ctl 鉴权:配置了 uiPassword 则必须携带(常数时间比较防时序侧信道) */
 function ctlAuthorized(req: Request, config: AppConfig): boolean {
 	if (!config.uiPassword) return true;
@@ -355,6 +382,10 @@ export function createServer(deps: ServerDeps): ReturnType<typeof Bun.serve> {
 				url = new URL(req.url);
 			} catch {
 				return json({ error: "非法 URL" }, 400);
+			}
+			const browserProblem = browserRequestProblem(req, deps.config);
+			if (browserProblem) {
+				return json({ error: browserProblem.error }, browserProblem.status);
 			}
 			const path = url.pathname;
 

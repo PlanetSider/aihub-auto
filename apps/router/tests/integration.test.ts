@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { CircuitBreaker, LocalObservationStore } from "@aihub-auto/core";
 import { handleProxy } from "../src/proxy.ts";
+import { browserRequestProblem } from "../src/server.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { makeStat } from "./mock-upstream.ts";
 
@@ -414,5 +415,64 @@ describe("控制台 API", () => {
 		const ui = await fetch(`${base}/ui`);
 		expect(ui.status).toBe(200);
 		expect(await ui.text()).toContain("aihub-auto");
+	});
+});
+
+describe("浏览器请求边界", () => {
+	test("允许同源浏览器和无 Origin 客户端", async () => {
+		h = createHarness({ withServer: true });
+		const base = h.serverUrl!;
+		expect((await fetch(`${base}/healthz`)).status).toBe(200);
+		expect(
+			(
+				await fetch(`${base}/healthz`, {
+					headers: { Origin: base },
+				})
+			).status,
+		).toBe(200);
+	});
+
+	test("拒绝跨站 Origin、null Origin 和 Sec-Fetch-Site", async () => {
+		h = createHarness({ withServer: true });
+		const base = h.serverUrl!;
+		expect(
+			(
+				await fetch(`${base}/ctl/status`, {
+					headers: { Origin: "https://attacker.example" },
+				})
+			).status,
+		).toBe(403);
+		expect(
+			(
+				await fetch(`${base}/ctl/status`, {
+					headers: { Origin: "null" },
+				})
+			).status,
+		).toBe(403);
+		expect(
+			(
+				await fetch(`${base}/v1/models`, {
+					headers: { "Sec-Fetch-Site": "cross-site" },
+				})
+			).status,
+		).toBe(403);
+	});
+
+	test("loopback 监听拒绝 rebound Host 并接受本机 Host", () => {
+		h = createHarness();
+		expect(
+			browserRequestProblem(
+				new Request("http://attacker.example/ctl/status"),
+				h.config,
+			),
+		).toMatchObject({ status: 421 });
+		for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
+			expect(
+				browserRequestProblem(
+					new Request(`http://${host}:8787/ctl/status`),
+					h.config,
+				),
+			).toBeUndefined();
+		}
 	});
 });
