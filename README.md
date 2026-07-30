@@ -20,6 +20,17 @@ export OPENAI_API_KEY="local-proxy"
 
 `OPENAI_API_KEY` 在本机默认可以是任意非空值；代理会使用你在控制台登录的 AIHub 凭据。客户端已经设置过 `OPENAI_BASE_URL` 时，只需替换成上面的本地地址后照常使用。
 
+需要修改本次启动的监听端口时，可以使用环境变量或命令行参数：
+
+```bash
+AIHUB_AUTO_PORT=9000 ./aihub-auto
+./aihub-auto --port 9000
+```
+
+端口优先级为 `--port` > `AIHUB_AUTO_PORT` > `config.json` 中的
+`listen.port` > 默认值 `8787`。命令行和环境变量只覆盖本次启动，不会写回
+`config.json`。运行 `./aihub-auto --help` 可查看启动参数。
+
 启动后可访问：
 
 | 地址 | 用途 |
@@ -71,6 +82,9 @@ export OPENAI_API_KEY="local-proxy"
 默认只监听 `127.0.0.1`。如需监听局域网地址，必须设置 `proxyToken` 和 `uiPassword`；客户端随后以 `OPENAI_API_KEY=<proxyToken>` 访问代理。公网部署应在可信反向代理和 TLS 后运行。
 
 完整配置项、池回收规则和安全边界见 [router 使用说明](apps/router/README.md)。
+
+Linux x64 发行包使用 Bun 的 baseline CPU 目标，以兼容不支持 AVX2 的较旧
+x86-64 处理器；Linux 用户态兼容性的实测边界见仓库安全审计报告。
 
 ## Koishi 查询插件
 

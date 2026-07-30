@@ -14,7 +14,12 @@ const TARGETS: { target: string; os: string; arch: string; bin: string }[] = [
 		arch: "x64",
 		bin: "aihub-auto.exe",
 	},
-	{ target: "bun-linux-x64", os: "linux", arch: "x64", bin: "aihub-auto" },
+	{
+		target: "bun-linux-x64-baseline",
+		os: "linux",
+		arch: "x64",
+		bin: "aihub-auto",
+	},
 	{ target: "bun-linux-arm64", os: "linux", arch: "arm64", bin: "aihub-auto" },
 	{ target: "bun-darwin-x64", os: "macos", arch: "x64", bin: "aihub-auto" },
 	{ target: "bun-darwin-arm64", os: "macos", arch: "arm64", bin: "aihub-auto" },

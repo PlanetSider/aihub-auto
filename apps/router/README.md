@@ -47,6 +47,17 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 
 配置目录:Windows `%LocalAppData%\aihub-auto`,Linux `~/.config/aihub-auto`,macOS `~/Library/Application Support/aihub-auto`。`config.json` 支持:
 
+监听端口也可只为本次启动覆盖，不修改 `config.json`：
+
+```bash
+AIHUB_AUTO_PORT=9000 ./aihub-auto
+./aihub-auto --port 9000
+```
+
+优先级为 `--port` > `AIHUB_AUTO_PORT` > `config.json` 的 `listen.port` >
+默认值 `8787`。端口必须是 1 到 65535 的十进制整数；非法值会在监听前使
+启动失败。运行 `./aihub-auto --help` 可查看启动参数。
+
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `baseUrl` | `https://aihub.top` | 站点地址(usage-stats 是 aihub 自有接口,不兼容其他站) |
@@ -66,6 +77,10 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 | `decision.*` | 见 ALGORITHM.md | 粘性/缓存惩罚/空闲阈值/最短驻留 |
 | `auditLog` | false | JSONL 决策审计(含每轮全部候选得分) |
 | `logLevel` | `info` | `app.log` 最低日志级别:debug / info / warn / error |
+
+Linux x64 发行包采用 Bun 的 `bun-linux-x64-baseline` 目标，支持不具备 AVX2
+的较旧 x86-64 CPU。旧 Linux 发行版用户态的实测结果和限制见根目录
+`security_best_practices_report.md`；容器测试共享宿主机内核，不代表旧内核兼容性。
 
 ## 安全边界
 
