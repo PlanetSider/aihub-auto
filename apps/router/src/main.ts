@@ -18,12 +18,22 @@ import { AuditLog, CrashLog, Logger, RollingFileLog } from "./logger.ts";
 import type { ProxyDeps } from "./proxy.ts";
 import { createServer } from "./server.ts";
 import { SessionAffinity } from "./session.ts";
+import {
+	applyStartupOptions,
+	parseStartupOptions,
+	STARTUP_HELP,
+} from "./startup.ts";
 import { TrafficTracker } from "./traffic.ts";
 
 async function main(): Promise<void> {
+	const startup = parseStartupOptions(process.argv.slice(2), process.env);
+	if (startup.help) {
+		console.log(STARTUP_HELP);
+		return;
+	}
 	const dir = configDir();
 	const store = new FileStore(dir);
-	const config = await loadConfig(store);
+	const config = applyStartupOptions(await loadConfig(store), startup);
 	const state = await loadState(store);
 	const credentials = await loadCredentials(store);
 
