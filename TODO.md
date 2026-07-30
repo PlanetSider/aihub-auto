@@ -27,7 +27,7 @@
 - [x] Eliminate the compiled-Bun `Controller is already closed` failure: terminal retry errors are local readable responses, real TCP cancellation reaches a single serialized stream pump, and deployed PID 35532 remains clean after live disconnect/failover probes.
 - [x] Re-run all tests plus compiled Windows terminal-error, `/v1/models` compression, and raw TCP stream-cancel stress before release.
 - [x] Publish the routing/console release to GitHub `v0.2.2` with six platform archives (`v0.2.1` remains immutable).
-- [ ] Publish the router/core `v0.3.0` release to GitHub with six platform archives.
+- [x] Publish the router/core `v0.3.0` release to GitHub with six platform archives.
 
 ## Stability follow-up
 
