@@ -84,7 +84,8 @@ AIHUB_AUTO_PORT=9000 ./aihub-auto
 完整配置项、池回收规则和安全边界见 [router 使用说明](apps/router/README.md)。
 
 Linux x64 发行包使用 Bun 的 baseline CPU 目标，以兼容不支持 AVX2 的较旧
-x86-64 处理器；Linux 用户态兼容性的实测边界见仓库安全审计报告。
+x86-64 处理器；已验证 CentOS 7（glibc 2.17）和 Debian 9（glibc 2.24），
+不支持 glibc 2.12 及更早版本。完整矩阵见仓库安全审计报告。
 
 ## Koishi 查询插件
 

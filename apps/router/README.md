@@ -79,7 +79,8 @@ AIHUB_AUTO_PORT=9000 ./aihub-auto
 | `logLevel` | `info` | `app.log` 最低日志级别:debug / info / warn / error |
 
 Linux x64 发行包采用 Bun 的 `bun-linux-x64-baseline` 目标，支持不具备 AVX2
-的较旧 x86-64 CPU。旧 Linux 发行版用户态的实测结果和限制见根目录
+的较旧 x86-64 CPU。已验证 CentOS 7（glibc 2.17）和 Debian 9（glibc
+2.24）；glibc 2.12 及更早版本不受支持。完整结果见根目录
 `security_best_practices_report.md`；容器测试共享宿主机内核，不代表旧内核兼容性。
 
 ## 安全边界
