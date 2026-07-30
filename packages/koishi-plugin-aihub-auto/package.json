@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-aihub-auto",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "查询 AIHub 当前最优分组,或最高倍率层中最慢的单个最烂分组",
   "type": "module",
   "main": "dist/index.cjs",

@@ -184,7 +184,7 @@ export function decide(
 	const wasPending = state.pendingSwitch?.groupId === top.stat.groupId;
 	const reason = wasPending
 		? "pending_realized"
-		: top.stat.rateMultiplier < current.stat.rateMultiplier
+		: top.effectiveRate < current.effectiveRate
 			? "better_price"
 			: "faster_weighted";
 	return switchTo(top, reason, threshold);

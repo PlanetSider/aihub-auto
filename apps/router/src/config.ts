@@ -11,6 +11,15 @@ import { homedir } from "node:os";
 export const ConfigSchema = z.object({
 	/** AIHub 站点(sub2api),usage-stats 为 aihub 自有接口 */
 	baseUrl: z.string().url().default("https://aihub.top"),
+	/** 模型代理请求的 User-Agent;空字符串表示沿用客户端值。 */
+	upstreamUserAgent: z
+		.string()
+		.max(256)
+		.refine(
+			(value) => /^[\x20-\x7e]*$/.test(value),
+			"User-Agent 只能包含可打印 ASCII 字符",
+		)
+		.default(""),
 	listen: z
 		.object({
 			host: z.string().default("127.0.0.1"),
@@ -96,6 +105,13 @@ export type AppConfig = z.infer<typeof ConfigSchema>;
 
 export const StateSchema = z.object({
 	currentGroupId: z.number().int().optional(),
+	/** 控制台手动锁定;revision 防止多个标签页用旧状态覆盖新锁定。 */
+	manualLock: z
+		.object({
+			groupId: z.number().int().positive().nullable(),
+			revision: z.number().int().nonnegative(),
+		})
+		.default({ groupId: null, revision: 0 }),
 	lastSwitchAt: z.number().optional(),
 	pendingSwitch: z
 		.object({ groupId: z.number().int(), since: z.number() })

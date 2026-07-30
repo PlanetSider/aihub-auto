@@ -7,7 +7,7 @@ import {
 	requestRoutingContext,
 	type SessionAffinity,
 } from "./session.ts";
-import type { TrafficTracker } from "./traffic.ts";
+import type { SingleKeyGate, TrafficTracker } from "./traffic.ts";
 
 export interface ProxyDeps {
 	baseUrl: string;
@@ -21,12 +21,15 @@ export interface ProxyDeps {
 	affinity: SessionAffinity;
 	observations: LocalObservationStore;
 	traffic: TrafficTracker;
+	singleKeyGate: SingleKeyGate;
 	logger: Logger;
 	ttfbTimeoutMs: number;
 	maxRetries?: number;
 	/** 请求体缓冲上限(重试需要);超限直通不可重试 */
 	maxBufferBytes?: number;
 	proxyToken?: string;
+	/** 每次请求读取,支持控制台热更新;空值时保留客户端 User-Agent。 */
+	upstreamUserAgent?: () => string;
 	fetch?: typeof globalThis.fetch;
 }
 
@@ -34,7 +37,6 @@ const MAX_ERROR_BYTES = 16 * 1024;
 const MAX_RESPONSE_ID_BYTES = 16 * 1024;
 const MAX_USAGE_BYTES = 64 * 1024;
 const LOCAL_RESPONSE_HEADER = "x-aihub-auto-local-response";
-const SINGLE_REQUESTS = new WeakMap<ProxyDeps, Promise<void>>();
 
 interface ByteReader {
 	read(): Promise<{ done: boolean; value?: Uint8Array }>;
@@ -70,6 +72,33 @@ function safeClose(
 	} catch (err) {
 		if (!isControllerClosedError(err)) throw err;
 	}
+}
+
+async function bufferBodyWithinLimit(
+	body: ReadableStream<Uint8Array>,
+	limit: number,
+): Promise<ArrayBuffer | undefined> {
+	const reader = body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		if (!value) continue;
+		size += value.byteLength;
+		if (size > limit) {
+			await reader.cancel("request body exceeds retry buffer").catch(() => {});
+			return undefined;
+		}
+		chunks.push(value);
+	}
+	const buffered = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) {
+		buffered.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return buffered.buffer;
 }
 
 const HOP_BY_HOP = new Set([
@@ -257,20 +286,7 @@ export async function handleProxy(
 		response.headers.delete(LOCAL_RESPONSE_HEADER);
 		return response;
 	}
-	const previous = SINGLE_REQUESTS.get(deps) ?? Promise.resolve();
-	let unlock!: () => void;
-	const current = new Promise<void>((resolve) => {
-		unlock = resolve;
-	});
-	SINGLE_REQUESTS.set(deps, current);
-	await previous;
-	let unlocked = false;
-	const finish = () => {
-		if (unlocked) return;
-		unlocked = true;
-		unlock();
-		if (SINGLE_REQUESTS.get(deps) === current) SINGLE_REQUESTS.delete(deps);
-	};
+	const finish = await deps.singleKeyGate.acquire();
 	try {
 		const response = await handleProxyRequest(req, deps);
 		if (response.headers.get(LOCAL_RESPONSE_HEADER) === "1") {
@@ -361,14 +377,17 @@ async function handleProxyRequest(
 	let body: ArrayBuffer | undefined;
 	let retriable = true;
 	if (req.body) {
-		const length = Number(req.headers.get("content-length") ?? "0");
-		if (length > 0 && length <= maxBuffer) {
-			body = await req.arrayBuffer();
-		} else if (length === 0) {
-			body = await req.arrayBuffer();
-			if (body.byteLength > maxBuffer) retriable = false;
-		} else {
+		const declaredLength = req.headers.get("content-length");
+		const length = declaredLength === null ? undefined : Number(declaredLength);
+		if (length !== undefined && Number.isFinite(length) && length > maxBuffer) {
+			// 已知大请求只透传一次,不为故障转移复制进内存。
 			retriable = false;
+		} else if (length !== undefined && Number.isFinite(length) && length > 0) {
+			body = await req.arrayBuffer();
+		} else {
+			body = await bufferBodyWithinLimit(req.body, maxBuffer);
+			if (body === undefined)
+				return errorResponse(413, `请求体超过重试缓冲上限 ${maxBuffer} 字节`);
 		}
 	}
 
@@ -395,6 +414,8 @@ async function handleProxyRequest(
 	// Bun fetch 会自动解压响应;请求 identity 并在响应侧移除编码声明,
 	// 防止把已解压字节伪装成 gzip 导致客户端二次解压。
 	headers.set("Accept-Encoding", "identity");
+	const upstreamUserAgent = deps.upstreamUserAgent?.();
+	if (upstreamUserAgent) headers.set("User-Agent", upstreamUserAgent);
 
 	const failedGroups: number[] = [];
 	let trackedGroup = active.groupId;
@@ -522,6 +543,29 @@ async function handleProxyRequest(
 				lastError = errorResponse(
 					502,
 					`上游${timedOut ? "TTFB 超时" : "连接失败"}(组 ${groupId})`,
+				);
+				if (!retriable) break;
+				continue;
+			}
+
+			if (response.status === 401 && active.invalidateCredential) {
+				finishTtfb();
+				lastError = upstreamErrorResponse(
+					response,
+					groupId,
+					`上游拒绝托管 Key(组 ${groupId})`,
+				);
+				void response.body?.cancel().catch(() => {});
+				deps.reportNeutral(groupId);
+				mayUpdateBinding = rollbackActive();
+				const invalidated = await active.invalidateCredential().catch((err) => {
+					deps.logger.warn(
+						`池 Key 作废失败 group=${groupId}: ${err instanceof Error ? err.message : String(err)}`,
+					);
+					return false;
+				});
+				deps.logger.warn(
+					`上游 401 group=${groupId} attempt=${attempt};${invalidated ? "已作废旧 Key" : "Key 已由并发请求刷新"}`,
 				);
 				if (!retriable) break;
 				continue;

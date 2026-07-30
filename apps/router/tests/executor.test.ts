@@ -117,6 +117,18 @@ describe("executor 模式 pool", () => {
 		expect(Object.keys(h.state.pool).sort()).toEqual(["1", "2"]);
 	});
 
+	test("手动锁定 Key 受普通 LRU 软保护,强无效回收后仍保留锁定意图", async () => {
+		h = poolHarness(1);
+		h.state.manualLock = { groupId: 1, revision: 1 };
+		await h.executor.ensureKey(1);
+		await h.executor.ensureKey(2);
+		expect(Object.keys(h.state.pool).sort()).toEqual(["1", "2"]);
+		h.state.pool["1"]!.lastUsedAt = 0;
+		expect(await h.executor.trimPool(new Set([1]))).toBe(1);
+		expect(h.state.pool["1"]).toBeUndefined();
+		expect(h.state.manualLock).toEqual({ groupId: 1, revision: 1 });
+	});
+
 	test("缓存窗口结束后回收旧 Key,但保留会话映射供按需重建", async () => {
 		h = poolHarness(1, 60_000);
 		await h.executor.ensureKey(1);
@@ -162,7 +174,7 @@ describe("executor 模式 pool", () => {
 		expect(h.state.pool["1"]).toBeUndefined();
 	});
 
-	test("对账:回收孤儿前缀 Key,绝不动非前缀 Key,清理失效记录", async () => {
+	test("对账:保留其他实例的未知前缀 Key,清理本地失效记录", async () => {
 		h = poolHarness();
 		// 远端孤儿(前缀但 state 不认识)
 		h.mock.keys.set(91, {
@@ -183,9 +195,34 @@ describe("executor 模式 pool", () => {
 
 		await h.executor.reconcile();
 
-		expect(h.mock.keys.has(91)).toBe(false); // 孤儿回收
+		expect(h.mock.keys.has(91)).toBe(true); // 可能属于同账号另一实例
 		expect(h.mock.keys.has(92)).toBe(true); // 用户 Key 不动
 		expect(h.state.pool["77"]).toBeUndefined(); // 失效记录清理
+	});
+
+	test("上游拒绝旧 sk 时 CAS 作废并重建,旧请求不能删新 Key", async () => {
+		h = poolHarness();
+		const old = await h.executor.acquireKey(1);
+		old.release?.();
+		const oldEntry = { ...h.state.pool["1"]! };
+
+		expect(await h.executor.invalidatePoolKey(1, "sk-other")).toBe(false);
+		expect(h.state.pool["1"]?.keyId).toBe(oldEntry.keyId);
+		const invalidations = await Promise.all(
+			Array.from({ length: 8 }, () => old.invalidateCredential!()),
+		);
+		expect(invalidations.filter(Boolean)).toHaveLength(1);
+		expect(h.state.pool["1"]).toBeUndefined();
+
+		const refreshed = await Promise.all(
+			Array.from({ length: 8 }, () => h.executor.ensureKey(1)),
+		);
+		expect(new Set(refreshed.map((key) => key.sk)).size).toBe(1);
+		const fresh = refreshed[0]!;
+		expect(fresh.sk).not.toBe(old.sk);
+		expect(h.state.pool["1"]?.keyId).not.toBe(oldEntry.keyId);
+		expect(await old.invalidateCredential?.()).toBe(false);
+		expect(h.state.pool["1"]?.sk).toBe(fresh.sk);
 	});
 
 	test("cleanup 删除全部自建 Key", async () => {

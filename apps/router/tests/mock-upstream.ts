@@ -34,7 +34,12 @@ export class MockAIHub {
 	keys = new Map<number, MockKey>();
 	behavior: MockBehavior = { groups: new Map() };
 	nextKeyId = 1;
-	requestLog: { method: string; path: string; auth?: string }[] = [];
+	requestLog: {
+		method: string;
+		path: string;
+		auth?: string;
+		userAgent?: string;
+	}[] = [];
 	loginCalls = 0;
 	refreshCalls = 0;
 	/** 强制业务接口返回 401(模拟 token 过期);refresh 后復位 */
@@ -72,7 +77,8 @@ export class MockAIHub {
 		const url = new URL(req.url);
 		const path = url.pathname;
 		const auth = req.headers.get("authorization") ?? undefined;
-		this.requestLog.push({ method: req.method, path, auth });
+		const userAgent = req.headers.get("user-agent") ?? undefined;
+		this.requestLog.push({ method: req.method, path, auth, userAgent });
 
 		// ---- 公开统计 ----
 		if (path === "/api/v1/public/groups/usage-stats") {
@@ -89,6 +95,22 @@ export class MockAIHub {
 					group_id: s.groupId,
 				}));
 			return this.envelope({ items, total: items.length, sample_limit: 100 });
+		}
+		if (path === "/api/v1/public/providers") {
+			return this.envelope({
+				generated_at: new Date().toISOString(),
+				items: this.stats.map((stat) => ({
+					code: stat.code,
+					platform: stat.platform,
+					rate_multiplier: stat.rateMultiplier,
+					group_id: stat.groupId,
+					available: stat.providerAvailable !== false,
+					probe_e2e_ttft_ms: stat.cloudProbeTtftMs ?? null,
+					user_avg_ttft_ms: stat.userAvgTtftMs ?? 0,
+					user_sample_count: stat.userSampleCount ?? 0,
+					user_has_data: stat.userAvgTtftMs !== undefined,
+				})),
+			});
 		}
 
 		// ---- 认证 ----

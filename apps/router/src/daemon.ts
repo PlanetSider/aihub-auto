@@ -1,10 +1,10 @@
 import {
-	DEFAULT_SCORE_WINDOW,
 	MODE_WEIGHTS,
 	type AIHubClient,
 	type CircuitBreaker,
 	type Decision,
 	type Evaluation,
+	type ExcludeReason,
 	type GroupStat,
 	type LocalObservationStore,
 	type Platform,
@@ -13,7 +13,7 @@ import {
 	type ScoringOptions,
 	decide,
 	evaluate,
-	recommendTopN,
+	mergeProviderLatencies,
 } from "@aihub-auto/core";
 import { randomUUID } from "node:crypto";
 import type { AppConfig, AppState, Credentials } from "./config.ts";
@@ -24,7 +24,7 @@ import {
 	stableUnitInterval,
 	type SessionAffinity,
 } from "./session.ts";
-import type { TrafficTracker } from "./traffic.ts";
+import type { SingleKeyGate, TrafficTracker } from "./traffic.ts";
 
 export interface DaemonDeps {
 	config: AppConfig;
@@ -36,6 +36,7 @@ export interface DaemonDeps {
 	observations: LocalObservationStore;
 	affinity: SessionAffinity;
 	traffic: TrafficTracker;
+	singleKeyGate: SingleKeyGate;
 	logger: Logger;
 	audit: AuditLog;
 	persistState: () => Promise<void>;
@@ -81,6 +82,7 @@ export class RouteDaemon {
 		Promise<ActiveKey | undefined>
 	>();
 	private singleRoute: Promise<unknown> = Promise.resolve();
+	private controlMutation: Promise<unknown> = Promise.resolve();
 	needsReauth = false;
 	lastRound: RoundResult | undefined;
 
@@ -92,12 +94,21 @@ export class RouteDaemon {
 		if (this.statsInflight) return this.statsInflight;
 		const pending = (async () => {
 			try {
-				const page = await this.deps.client.getUsageStats({
-					platform,
-					samples: this.deps.config.samples,
-				});
-				this.lastStats.set(platform, { items: page.items, at: Date.now() });
-				return { items: page.items, stale: false };
+				const [page, providers] = await Promise.all([
+					this.deps.client.getUsageStats({
+						platform,
+						samples: this.deps.config.samples,
+					}),
+					this.deps.client.getProviderLatencyStats(platform).catch((err) => {
+						this.deps.logger.debug(
+							`provider TTFT 拉取失败(${platform}),回退 usage-stats:${err instanceof Error ? err.message : ""}`,
+						);
+						return new Map();
+					}),
+				]);
+				const items = mergeProviderLatencies(page.items, providers);
+				this.lastStats.set(platform, { items, at: Date.now() });
+				return { items, stale: false };
 			} catch (err) {
 				const cached = this.lastStats.get(platform);
 				this.deps.logger.warn(
@@ -203,7 +214,84 @@ export class RouteDaemon {
 	}
 
 	/** 公开统计轮:维护默认组并预热它的 Key;已绑定会话不会随之迁移。 */
-	async runOnce(opts?: {
+	runOnce(opts?: {
+		dryRun?: boolean;
+		platform?: Platform;
+	}): Promise<RoundResult> {
+		return this.serializeControlMutation(() => this.runOnceLocked(opts));
+	}
+
+	/** 与守护轮串行执行其他控制面变更。 */
+	runControlMutation<T>(fn: () => Promise<T>): Promise<T> {
+		return this.serializeControlMutation(fn);
+	}
+
+	/** 锁 revision、当前配置资格检查与持久化在同一控制事务内完成。 */
+	updateManualLock(
+		groupId: number | null,
+		expectedRevision: number,
+	): Promise<
+		| { updated: true; lock: AppState["manualLock"] }
+		| {
+				updated: false;
+				lock: AppState["manualLock"];
+				conflict: "revision" | "not_found" | "ineligible";
+				reason?: ExcludeReason;
+		  }
+	> {
+		return this.serializeControlMutation(async () => {
+			const current = this.deps.state.manualLock;
+			if (current.revision !== expectedRevision) {
+				return {
+					updated: false as const,
+					lock: { ...current },
+					conflict: "revision" as const,
+				};
+			}
+			if (current.groupId === groupId) {
+				return { updated: true as const, lock: { ...current } };
+			}
+			if (groupId !== null) {
+				await this.refreshAccountData();
+				const items = await this.routingItems();
+				const target = items.find((item) => item.groupId === groupId);
+				if (!target) {
+					return {
+						updated: false as const,
+						lock: { ...current },
+						conflict: "not_found" as const,
+					};
+				}
+				const checked = evaluate(
+					[target],
+					{
+						...this.scoringOptions("openai", Date.now(), [], true),
+						mode: "balanced",
+					},
+					this.deps.observations.asMap(),
+					this.userRates,
+				);
+				if (
+					!checked.eligible.some((candidate) =>
+						Number.isFinite(candidate.score),
+					)
+				) {
+					return {
+						updated: false as const,
+						lock: { ...current },
+						conflict: "ineligible" as const,
+						reason: checked.excluded[0]?.excludeReason,
+					};
+				}
+			}
+			const lock = { groupId, revision: current.revision + 1 };
+			this.deps.state.manualLock = lock;
+			await this.deps.persistState();
+			return { updated: true as const, lock: { ...lock } };
+		});
+	}
+
+	private async runOnceLocked(opts?: {
 		dryRun?: boolean;
 		platform?: Platform;
 	}): Promise<RoundResult> {
@@ -219,13 +307,31 @@ export class RouteDaemon {
 			lastSwitchAt: this.deps.state.lastSwitchAt,
 			pendingSwitch: this.deps.state.pendingSwitch,
 		};
-		const decision = decide(
-			evaluation,
-			routeState,
-			this.deps.config.decision,
-			this.deps.traffic.snapshot(now),
-			now,
-		);
+		const lockedCandidate = this.manualLockCandidate(items, new Set(), now);
+		const decision: Decision = lockedCandidate
+			? {
+					targetGroupId: lockedCandidate.stat.groupId,
+					shouldSwitch:
+						routeState.currentGroupId !== lockedCandidate.stat.groupId,
+					reason: "manual_lock",
+					targetScore: lockedCandidate.score,
+					effectiveThreshold: 0,
+					nextState:
+						routeState.currentGroupId === lockedCandidate.stat.groupId
+							? { ...routeState, pendingSwitch: undefined }
+							: {
+									currentGroupId: lockedCandidate.stat.groupId,
+									lastSwitchAt: now,
+									pendingSwitch: undefined,
+								},
+				}
+			: decide(
+					evaluation,
+					routeState,
+					this.deps.config.decision,
+					this.deps.traffic.snapshot(now),
+					now,
+				);
 
 		let executed = false;
 		if (
@@ -233,6 +339,10 @@ export class RouteDaemon {
 			decision.shouldSwitch &&
 			decision.targetGroupId !== undefined
 		) {
+			const releaseSingleKey =
+				this.deps.config.keyMode === "single"
+					? await this.deps.singleKeyGate.acquire()
+					: undefined;
 			try {
 				await this.deps.executor.switchTo(decision.targetGroupId);
 				executed = true;
@@ -242,6 +352,8 @@ export class RouteDaemon {
 				this.deps.logger.error(
 					`切换执行失败:${err instanceof Error ? err.message : String(err)}`,
 				);
+			} finally {
+				releaseSingleKey?.();
 			}
 		} else if (!opts?.dryRun) {
 			this.deps.state.pendingSwitch = decision.nextState.pendingSwitch;
@@ -269,6 +381,19 @@ export class RouteDaemon {
 				group: candidate.stat.groupId,
 				code: candidate.stat.code,
 				rate: candidate.effectiveRate,
+				userTtft: candidate.userTtftMs
+					? Math.round(candidate.userTtftMs)
+					: undefined,
+				userSamples: candidate.userSampleCount,
+				cloudProbeTtft: candidate.cloudProbeTtftMs
+					? Math.round(candidate.cloudProbeTtftMs)
+					: undefined,
+				upstreamTtft: candidate.upstreamTtftMs
+					? Math.round(candidate.upstreamTtftMs)
+					: undefined,
+				localTtft: candidate.localTtftMs
+					? Math.round(candidate.localTtftMs)
+					: undefined,
 				ttft: Math.round(candidate.blendedTtftMs),
 				conservative: Math.round(candidate.conservativeLatencyMs),
 				confidence: Number(candidate.confidence.toFixed(3)),
@@ -336,6 +461,21 @@ export class RouteDaemon {
 			blocked.add(groupId);
 		}
 		const current = this.deps.executor.currentKey();
+		const lockedGroupId = this.deps.state.manualLock.groupId;
+		if (
+			lockedGroupId !== null &&
+			!blocked.has(lockedGroupId) &&
+			this.hardEligible(lockedGroupId, items, blocked, now) &&
+			this.deps.breaker.allowRequest(lockedGroupId, now)
+		) {
+			if (current?.groupId === lockedGroupId) return current;
+			try {
+				return await this.deps.executor.switchTo(lockedGroupId);
+			} catch (err) {
+				this.deps.breaker.releaseRequest(lockedGroupId, now);
+				throw err;
+			}
+		}
 		if (
 			current &&
 			this.hardEligible(current.groupId, items, blocked, now) &&
@@ -395,6 +535,21 @@ export class RouteDaemon {
 		) {
 			return this.prepareRequestKey(
 				affinityGroupId,
+				request,
+				previousGroupId,
+				now,
+			);
+		}
+
+		const lockedGroupId = this.deps.state.manualLock.groupId;
+		if (
+			lockedGroupId !== null &&
+			!failed.has(lockedGroupId) &&
+			this.hardEligible(lockedGroupId, items, failed, now) &&
+			this.deps.breaker.allowRequest(lockedGroupId, now)
+		) {
+			return this.prepareRequestKey(
+				lockedGroupId,
 				request,
 				previousGroupId,
 				now,
@@ -467,6 +622,29 @@ export class RouteDaemon {
 		).eligible.some((candidate) => candidate.stat.groupId === groupId);
 	}
 
+	private manualLockCandidate(
+		items: readonly GroupStat[],
+		blocked: ReadonlySet<number>,
+		now: number,
+	): ScoredCandidate | undefined {
+		const groupId = this.deps.state.manualLock.groupId;
+		if (groupId === null || blocked.has(groupId)) return undefined;
+		const target = items.find((item) => item.groupId === groupId);
+		if (!target) return undefined;
+		return evaluate(
+			[target],
+			{
+				...this.scoringOptions("openai", now, [...blocked], true),
+				mode: "balanced",
+			},
+			this.deps.observations.asMap(now),
+			this.userRates,
+		).eligible.find(
+			(candidate) =>
+				candidate.stat.groupId === groupId && Number.isFinite(candidate.score),
+		);
+	}
+
 	private async prepareRequestKey(
 		groupId: number,
 		request: RouteRequest,
@@ -512,40 +690,36 @@ export class RouteDaemon {
 		evaluation: Evaluation,
 		seed: string,
 	): ScoredCandidate | undefined {
-		const candidates = recommendTopN(evaluation, {
-			scoreWindow: DEFAULT_SCORE_WINDOW,
-			max: this.deps.config.poolMaxGroups,
-		});
+		// 请求调度使用显式池上限,不复用 Koishi 展示用的 scoreWindow。
+		// 否则健康容量会在负载计算前被永久排除。
+		const candidates = evaluation.eligible
+			.filter((candidate) => Number.isFinite(candidate.score))
+			.slice(0, this.deps.config.poolMaxGroups);
 		if (candidates.length <= 1) return candidates[0];
 
-		const firstIndex = Math.floor(
-			stableUnitInterval(`${seed}:p2c:0`) * candidates.length,
-		);
-		let secondIndex = Math.floor(
-			stableUnitInterval(`${seed}:p2c:1`) * (candidates.length - 1),
-		);
-		if (secondIndex >= firstIndex) secondIndex++;
-		const first = candidates[firstIndex]!;
+		// 小池场景始终让静态最优组参加比较,再按会话稳定抽一个挑战者。
+		// 空载不牺牲质量;最优组积压后仍能使用池内全部容量。
+		const first = candidates[0]!;
+		const secondIndex =
+			1 +
+			Math.floor(
+				stableUnitInterval(`${seed}:p2c:challenger`) * (candidates.length - 1),
+			);
 		const second = candidates[secondIndex]!;
 		const active = this.deps.traffic.snapshot().activeByGroup ?? {};
-		const weights = MODE_WEIGHTS[this.deps.config.mode];
-		const baselineLatency = evaluation.baseline?.conservativeLatencyMs ?? 1;
+		const { latencyWeight } = MODE_WEIGHTS[this.deps.config.mode];
 		const adjustedScore = (candidate: ScoredCandidate): number => {
-			if (!Number.isFinite(candidate.premium)) return Number.NEGATIVE_INFINITY;
 			const pending = active[String(candidate.stat.groupId)] ?? 0;
-			const loadedLatency = candidate.conservativeLatencyMs * (pending + 1);
-			const speedup = baselineLatency / loadedLatency - 1;
-			return (
-				weights.latencyWeight * speedup -
-				weights.priceWeight * candidate.premium
-			);
+			// 静态评分与负载评分共享同一对数效用:
+			// log(latency * (pending + 1)) = log(latency) + log(pending + 1)。
+			return candidate.score - latencyWeight * Math.log(pending + 1);
 		};
 		const firstScore = adjustedScore(first);
 		const secondScore = adjustedScore(second);
 		if (firstScore !== secondScore)
 			return firstScore > secondScore ? first : second;
-		// first 由会话哈希均匀抽样;按 groupId 打破平局会令两候选时永久扎堆小 ID。
-		return first;
+		// 等权候选用会话哈希拆分,避免静态最优组在并发冷启动时形成热点。
+		return stableUnitInterval(`${seed}:p2c:tie`) < 0.5 ? first : second;
 	}
 
 	private halfOpenProbe(
@@ -665,6 +839,15 @@ export class RouteDaemon {
 	reportNeutral(groupId: number): void {
 		this.deps.breaker.releaseRequest(groupId);
 		this.persistRuntimeStateSoon();
+	}
+
+	private serializeControlMutation<T>(fn: () => Promise<T>): Promise<T> {
+		const current = this.controlMutation.then(fn, fn);
+		this.controlMutation = current.then(
+			() => undefined,
+			() => undefined,
+		);
+		return current;
 	}
 
 	/** 旧调用兼容;pool 下只为本次请求选择备用组。 */

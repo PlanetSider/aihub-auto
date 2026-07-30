@@ -1,4 +1,4 @@
-import type { AIHubClient } from "@aihub-auto/core";
+import type { AIHubClient, ExcludeReason } from "@aihub-auto/core";
 import type { AppConfig, AppState, Credentials, FileStore } from "./config.ts";
 import { ConfigSchema } from "./config.ts";
 import type { RouteDaemon } from "./daemon.ts";
@@ -18,6 +18,7 @@ export interface ServerDeps {
 	store: FileStore;
 	logger: Logger;
 	persistConfig: () => Promise<void>;
+	persistState: () => Promise<void>;
 	persistCredentials: () => Promise<void>;
 }
 
@@ -27,6 +28,11 @@ function json(body: unknown, status = 200): Response {
 		headers: { "Content-Type": "application/json" },
 	});
 }
+
+const MANUAL_LOCK_OVERRIDE_REASONS = new Set<ExcludeReason>([
+	"economy_unstable",
+	"economy_too_slow",
+]);
 
 /** /ctl 鉴权:配置了 uiPassword 则必须携带(常数时间比较防时序侧信道) */
 function ctlAuthorized(req: Request, config: AppConfig): boolean {
@@ -60,6 +66,11 @@ export async function handleControl(
 			ttft?: number;
 			conservative?: number;
 			confidence?: number;
+			cloudProbeTtft?: number;
+			userTtft?: number;
+			userSamples?: number;
+			upstreamTtft?: number;
+			localTtft?: number;
 			localWeight?: number;
 			localSamples?: number;
 			successRate?: number;
@@ -68,6 +79,7 @@ export async function handleControl(
 			standby?: boolean;
 			excluded: boolean;
 			excludeReason?: string;
+			forceable: boolean;
 		}> = [];
 		if (round) {
 			for (const c of round.evaluation.eligible) {
@@ -78,12 +90,22 @@ export async function handleControl(
 					ttft: Math.round(c.blendedTtftMs),
 					conservative: Math.round(c.conservativeLatencyMs),
 					confidence: Number(c.confidence.toFixed(2)),
+					cloudProbeTtft: c.cloudProbeTtftMs
+						? Math.round(c.cloudProbeTtftMs)
+						: undefined,
+					userTtft: c.userTtftMs ? Math.round(c.userTtftMs) : undefined,
+					userSamples: c.userSampleCount,
+					upstreamTtft: c.upstreamTtftMs
+						? Math.round(c.upstreamTtftMs)
+						: undefined,
+					localTtft: c.localTtftMs ? Math.round(c.localTtftMs) : undefined,
 					localWeight: Number(c.localConfidence.toFixed(2)),
 					localSamples: c.localSampleCount,
 					successRate: Number(c.successRate.toFixed(3)),
 					outcomeSamples: c.outcomeSampleCount,
 					score: Number.isFinite(c.score) ? c.score : String(c.score),
 					excluded: false,
+					forceable: true,
 				});
 			}
 			for (const c of round.evaluation.standby) {
@@ -94,6 +116,15 @@ export async function handleControl(
 					ttft: Math.round(c.blendedTtftMs),
 					conservative: Math.round(c.conservativeLatencyMs),
 					confidence: Number(c.confidence.toFixed(2)),
+					cloudProbeTtft: c.cloudProbeTtftMs
+						? Math.round(c.cloudProbeTtftMs)
+						: undefined,
+					userTtft: c.userTtftMs ? Math.round(c.userTtftMs) : undefined,
+					userSamples: c.userSampleCount,
+					upstreamTtft: c.upstreamTtftMs
+						? Math.round(c.upstreamTtftMs)
+						: undefined,
+					localTtft: c.localTtftMs ? Math.round(c.localTtftMs) : undefined,
 					localWeight: Number(c.localConfidence.toFixed(2)),
 					localSamples: c.localSampleCount,
 					successRate: Number(c.successRate.toFixed(3)),
@@ -101,6 +132,7 @@ export async function handleControl(
 					score: Number.isFinite(c.score) ? c.score : String(c.score),
 					standby: true,
 					excluded: false,
+					forceable: true,
 				});
 			}
 			for (const e of round.evaluation.excluded) {
@@ -115,6 +147,19 @@ export async function handleControl(
 					confidence: e.evidence
 						? Number(e.evidence.confidence.toFixed(2))
 						: undefined,
+					cloudProbeTtft: e.evidence?.cloudProbeTtftMs
+						? Math.round(e.evidence.cloudProbeTtftMs)
+						: undefined,
+					userTtft: e.evidence?.userTtftMs
+						? Math.round(e.evidence.userTtftMs)
+						: undefined,
+					userSamples: e.evidence?.userSampleCount,
+					upstreamTtft: e.evidence?.upstreamTtftMs
+						? Math.round(e.evidence.upstreamTtftMs)
+						: undefined,
+					localTtft: e.evidence?.localTtftMs
+						? Math.round(e.evidence.localTtftMs)
+						: undefined,
 					localWeight: e.evidence
 						? Number(e.evidence.localConfidence.toFixed(2))
 						: undefined,
@@ -125,6 +170,7 @@ export async function handleControl(
 					outcomeSamples: e.evidence?.outcomeSampleCount,
 					excluded: true,
 					excludeReason: e.excludeReason,
+					forceable: MANUAL_LOCK_OVERRIDE_REASONS.has(e.excludeReason),
 				});
 			}
 		}
@@ -141,6 +187,9 @@ export async function handleControl(
 			...(deps.state.currentGroupId === undefined
 				? []
 				: [deps.state.currentGroupId]),
+			...(deps.state.manualLock.groupId === null
+				? []
+				: [deps.state.manualLock.groupId]),
 			...Object.keys(deps.state.pool).map(Number),
 			...Object.keys(affinity.byGroup).map(Number),
 			...Object.keys(affinity.aliasesByGroup).map(Number),
@@ -202,6 +251,10 @@ export async function handleControl(
 		const currentCode = candidateByGroup.get(
 			deps.state.currentGroupId ?? -1,
 		)?.code;
+		const lockedCandidate =
+			deps.state.manualLock.groupId === null
+				? undefined
+				: candidateByGroup.get(deps.state.manualLock.groupId);
 		return json({
 			currentGroupId: deps.state.currentGroupId ?? null,
 			currentCode: currentCode ?? null,
@@ -211,6 +264,7 @@ export async function handleControl(
 				poolMaxGroups: deps.config.poolMaxGroups,
 				priceBand: deps.config.priceBand,
 				economyPolicy: deps.config.economyPolicy,
+				upstreamUserAgent: deps.config.upstreamUserAgent,
 				cacheIdleMs: deps.config.decision.cacheIdleMs,
 				blacklist: deps.config.blacklist,
 			},
@@ -221,6 +275,16 @@ export async function handleControl(
 				]),
 			),
 			groups,
+			manualLock: {
+				...deps.state.manualLock,
+				effective:
+					deps.state.manualLock.groupId !== null &&
+					Boolean(lockedCandidate?.forceable),
+				reason:
+					deps.state.manualLock.groupId === null || lockedCandidate?.forceable
+						? null
+						: (lockedCandidate?.excludeReason ?? "missing_group"),
+			},
 			affinity,
 			modelBlocks: deps.daemon.modelBlockStats(),
 			hasToken: Boolean(deps.credentials.accessToken),
@@ -228,6 +292,69 @@ export async function handleControl(
 			traffic,
 			stale: round?.stale ?? false,
 			candidates,
+		});
+	}
+
+	if (path === "/ctl/route-lock" && req.method === "PUT") {
+		let body: Record<string, unknown>;
+		try {
+			body = (await req.json()) as Record<string, unknown>;
+		} catch {
+			return json({ error: "非法 JSON" }, 400);
+		}
+		if (
+			typeof body !== "object" ||
+			body === null ||
+			Object.keys(body).some(
+				(key) => key !== "groupId" && key !== "expectedRevision",
+			)
+		) {
+			return json(
+				{ error: "锁定请求只能包含 groupId 和 expectedRevision" },
+				400,
+			);
+		}
+		const groupId = body["groupId"];
+		const expectedRevision = body["expectedRevision"];
+		if (
+			(groupId !== null &&
+				(!Number.isSafeInteger(groupId) || Number(groupId) <= 0)) ||
+			!Number.isSafeInteger(expectedRevision) ||
+			Number(expectedRevision) < 0
+		) {
+			return json(
+				{
+					error: "groupId 必须为正整数或 null，expectedRevision 必须为非负整数",
+				},
+				400,
+			);
+		}
+		const update = await deps.daemon.updateManualLock(
+			groupId === null ? null : Number(groupId),
+			Number(expectedRevision),
+		);
+		if (!update.updated) {
+			const error =
+				update.conflict === "revision"
+					? "锁定状态已被其他操作更新，请刷新后重试"
+					: update.conflict === "not_found"
+						? "当前统计中找不到该分组，请先刷新路由数据"
+						: `该分组当前不可锁定:${update.reason ?? "unknown"}`;
+			return json(
+				{
+					error,
+					manualLock: update.lock,
+					reason: update.reason,
+				},
+				409,
+			);
+		}
+		const round = await deps.daemon.runOnce();
+		return json({
+			ok: true,
+			manualLock: update.lock,
+			currentGroupId: deps.state.currentGroupId ?? null,
+			executed: round.executed,
 		});
 	}
 
@@ -251,43 +378,51 @@ export async function handleControl(
 			"mode",
 			"priceBand",
 			"economyPolicy",
+			"upstreamUserAgent",
 			"blacklist",
 			"pollIntervalMs",
 			"samples",
 		];
-		const merged: Record<string, unknown> = { ...deps.config };
-		for (const k of allowed) {
-			if (k in patch) merged[k] = patch[k];
-		}
-		if (
-			patch.priceBand &&
-			typeof patch.priceBand === "object" &&
-			!Array.isArray(patch.priceBand)
-		) {
-			merged.priceBand = { ...deps.config.priceBand, ...patch.priceBand };
-		}
-		if (
-			patch.economyPolicy &&
-			typeof patch.economyPolicy === "object" &&
-			!Array.isArray(patch.economyPolicy)
-		) {
-			merged.economyPolicy = {
-				...deps.config.economyPolicy,
-				...patch.economyPolicy,
-			};
-		}
-		const parsed = ConfigSchema.safeParse(merged);
-		if (!parsed.success) {
-			return json(
-				{
-					error: `配置校验失败:${parsed.error.issues.map((i) => i.message).join("; ")}`,
-				},
-				400,
-			);
-		}
-		Object.assign(deps.config, parsed.data);
-		await deps.persistConfig();
-		return json({ ok: true });
+		const configUpdate = await deps.daemon.runControlMutation(async () => {
+			const merged: Record<string, unknown> = { ...deps.config };
+			for (const k of allowed) {
+				if (k in patch) merged[k] = patch[k];
+			}
+			if (
+				patch.priceBand &&
+				typeof patch.priceBand === "object" &&
+				!Array.isArray(patch.priceBand)
+			) {
+				merged.priceBand = { ...deps.config.priceBand, ...patch.priceBand };
+			}
+			if (
+				patch.economyPolicy &&
+				typeof patch.economyPolicy === "object" &&
+				!Array.isArray(patch.economyPolicy)
+			) {
+				merged.economyPolicy = {
+					...deps.config.economyPolicy,
+					...patch.economyPolicy,
+				};
+			}
+			const parsed = ConfigSchema.safeParse(merged);
+			if (!parsed.success) {
+				return {
+					ok: false as const,
+					error: `配置校验失败:${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+				};
+			}
+			Object.assign(deps.config, parsed.data);
+			await deps.persistConfig();
+			return { ok: true as const };
+		});
+		if (!configUpdate.ok) return json({ error: configUpdate.error }, 400);
+		const round = await deps.daemon.runOnce();
+		return json({
+			ok: true,
+			decision: round.decision,
+			executed: round.executed,
+		});
 	}
 
 	if (path === "/ctl/login" && req.method === "POST") {

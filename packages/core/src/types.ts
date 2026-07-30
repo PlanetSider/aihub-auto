@@ -8,7 +8,16 @@ export interface GroupStat {
 	code: string;
 	platform: Platform;
 	rateMultiplier: number;
+	/** 旧 usage-stats 的真实请求平均 TTFT;新接口缺失时作为用户均值回退。 */
 	avgTtftMs: number;
+	/** 官网 provider 列表明确标记的当前可用性;false 时硬排除历史 usage 条目。 */
+	providerAvailable?: boolean;
+	/** 官网标准化云端探测端到端 TTFT。 */
+	cloudProbeTtftMs?: number;
+	/** 官网真实用户平均 TTFT。 */
+	userAvgTtftMs?: number;
+	/** 官网真实用户 TTFT 样本数;只用于解释,不因样本少排除。 */
+	userSampleCount?: number;
 	sampleCount: number;
 	/** ISO 8601 */
 	lastSampleAt: string;
@@ -19,6 +28,15 @@ export interface UsageStatsPage {
 	items: GroupStat[];
 	total: number;
 	sampleLimit: number;
+}
+
+export interface ProviderLatencyStat {
+	groupId: number;
+	platform: Platform;
+	available?: boolean;
+	cloudProbeTtftMs?: number;
+	userAvgTtftMs?: number;
+	userSampleCount: number;
 }
 
 export interface GroupInfo {
@@ -134,8 +152,17 @@ export interface ScoredCandidate {
 	stat: GroupStat;
 	/** 用户专属倍率覆盖后的真实倍率 */
 	effectiveRate: number;
-	/** 公开先验置信度 0..1 */
+	/** 上游延迟证据可用度 0..1。 */
 	publicConfidence: number;
+	/** 官网云端探测 TTFT。 */
+	cloudProbeTtftMs?: number;
+	/** 官网真实用户平均 TTFT(旧 usage-stats 可回退)。 */
+	userTtftMs?: number;
+	userSampleCount: number;
+	/** 两路上游证据的对数融合 TTFT。 */
+	upstreamTtftMs?: number;
+	/** 本地 Peak/P90 风险 TTFT。 */
+	localTtftMs?: number;
 	/** 本地观测置信度 0..1 */
 	localConfidence: number;
 	localSampleCount: number;
@@ -167,6 +194,11 @@ export interface ExcludedCandidate {
 	/** 进入 economy 健康门槛后被排除时保留的解释证据。 */
 	evidence?: Pick<
 		ScoredCandidate,
+		| "cloudProbeTtftMs"
+		| "userTtftMs"
+		| "userSampleCount"
+		| "upstreamTtftMs"
+		| "localTtftMs"
 		| "localConfidence"
 		| "localSampleCount"
 		| "outcomeSampleCount"
@@ -189,7 +221,7 @@ export interface Evaluation {
 	excluded: ExcludedCandidate[];
 	/** 最低有效倍率(基准),无候选时 undefined */
 	minimumRate?: number;
-	/** 基准候选(最低倍率中保守延迟最低者) */
+	/** 当前可路由候选中保守延迟最低者。 */
 	baseline?: ScoredCandidate;
 }
 
@@ -224,6 +256,7 @@ export interface DecisionPolicy {
 export type DecisionReason =
 	| "no_candidate"
 	| "initial_route"
+	| "manual_lock"
 	| "current_invalid"
 	| "failover"
 	| "already_optimal"

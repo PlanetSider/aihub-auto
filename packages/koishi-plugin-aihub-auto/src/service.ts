@@ -1,6 +1,8 @@
 import {
 	evaluate,
+	mergeProviderLatencies,
 	parseGroupStat,
+	parseProviderLatencyStat,
 	recommendTopN,
 	type Evaluation,
 	type GroupStat,
@@ -8,10 +10,7 @@ import {
 	type RoutingMode,
 	type ScoredCandidate,
 } from "@aihub-auto/core";
-import {
-	DEFAULT_ERROR_RATE_CAP,
-	PLATFORMS,
-} from "@aihub-auto/core";
+import { DEFAULT_ERROR_RATE_CAP, PLATFORMS } from "@aihub-auto/core";
 
 export interface RecommendOptions {
 	baseUrl: string;
@@ -119,10 +118,17 @@ export class RecommendService {
 					samples: String(opts.samples),
 					platform,
 				});
-				const raw = await opts.getJson(
-					`${opts.baseUrl.replace(/\/+$/, "")}/api/v1/public/groups/usage-stats?${q}`,
+				const baseUrl = opts.baseUrl.replace(/\/+$/, "");
+				const [raw, providerRaw] = await Promise.all([
+					opts.getJson(`${baseUrl}/api/v1/public/groups/usage-stats?${q}`),
+					opts
+						.getJson(`${baseUrl}/api/v1/public/providers`)
+						.catch(() => undefined),
+				]);
+				const stats = mergeProviderLatencies(
+					parseStatsResponse(raw),
+					parseProviderResponse(providerRaw),
 				);
-				const stats = parseStatsResponse(raw);
 				const evaluationOptions = {
 					priceBand: { min: 0, max: opts.maxRate },
 					blacklist: [],
@@ -170,4 +176,24 @@ export function parseStatsResponse(raw: unknown): GroupStat[] {
 	return items
 		.map(parseGroupStat)
 		.filter((s): s is GroupStat => s !== undefined);
+}
+
+export function parseProviderResponse(raw: unknown) {
+	const root =
+		typeof raw === "object" && raw !== null
+			? (raw as Record<string, unknown>)
+			: {};
+	const data =
+		typeof root["data"] === "object" && root["data"] !== null
+			? (root["data"] as Record<string, unknown>)
+			: root;
+	const items = Array.isArray(data["items"])
+		? (data["items"] as unknown[])
+		: [];
+	return new Map(
+		items
+			.map(parseProviderLatencyStat)
+			.filter((item) => item !== undefined)
+			.map((item) => [item.groupId, item] as const),
+	);
 }

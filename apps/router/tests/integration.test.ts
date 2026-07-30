@@ -32,6 +32,26 @@ describe("守护循环", () => {
 		expect(res.status).toBe(200);
 	});
 
+	test("provider 不可用时排除仍有 usage 样本的分组", async () => {
+		h = createHarness({ configPatch: { keyMode: "pool" } });
+		h.mock.stats = [
+			makeStat({
+				groupId: 48,
+				providerAvailable: false,
+				rateMultiplier: 0.01,
+				avgTtftMs: 100,
+			}),
+			makeStat({ groupId: 49, rateMultiplier: 0.02, avgTtftMs: 1000 }),
+		];
+		const round = await h.daemon.runOnce();
+		expect(h.state.currentGroupId).toBe(49);
+		expect(
+			round.evaluation.excluded.find(
+				(candidate) => candidate.stat.groupId === 48,
+			)?.excludeReason,
+		).toBe("unavailable_group");
+	});
+
 	test("统计拉取失败:容忍并用上轮缓存(标 stale)", async () => {
 		h = createHarness({ configPatch: { keyMode: "pool" } });
 		h.mock.stats = [makeStat({ groupId: 1 })];
@@ -126,10 +146,15 @@ describe("省钱优先", () => {
 		expect(round.evaluation.standby.map((c) => c.stat.groupId)).toEqual([3]);
 		expect(round.evaluation.excluded).toHaveLength(0);
 
-		for (let index = 0; index < 8; index++) {
-			const key = await h.daemon.route({ sessionKey: `new-${index}` });
-			expect(key?.groupId === 1 || key?.groupId === 2).toBe(true);
-			key?.release?.();
+		const economyActive = [];
+		try {
+			for (let index = 0; index < 8; index++) {
+				const key = await h.daemon.route({ sessionKey: `new-${index}` });
+				expect(key?.groupId === 1 || key?.groupId === 2).toBe(true);
+				economyActive.push(key!);
+			}
+		} finally {
+			for (const key of economyActive) key.release?.();
 		}
 
 		const fallback = await h.daemon.route({
@@ -146,6 +171,257 @@ describe("省钱优先", () => {
 		});
 		expect(continued?.groupId).toBe(3);
 		continued?.release?.();
+	});
+});
+
+describe("三模式并发调度", () => {
+	test("balanced 在最优组积压后使用三候选池内的较贵容量", async () => {
+		h = createHarness({
+			configPatch: { keyMode: "pool", mode: "balanced", poolMaxGroups: 3 },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.01, avgTtftMs: 1000 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.02, avgTtftMs: 1000 }),
+			makeStat({ groupId: 3, rateMultiplier: 0.04, avgTtftMs: 1000 }),
+		];
+		await h.daemon.runOnce();
+		const active = [];
+		try {
+			for (let index = 0; index < 12; index++) {
+				const key = await h.daemon.route({ sessionKey: `balanced-${index}` });
+				expect(key).toBeDefined();
+				active.push(key!);
+			}
+			const groups = active.map((key) => key.groupId);
+			expect(groups).toContain(2);
+			expect(groups).toContain(3);
+		} finally {
+			for (const key of active) key.release?.();
+		}
+	});
+
+	test("speed 在积压后使用三候选池内的快速付费容量", async () => {
+		h = createHarness({
+			configPatch: { keyMode: "pool", mode: "speed", poolMaxGroups: 3 },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.01, avgTtftMs: 1100 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.03, avgTtftMs: 700 }),
+			makeStat({ groupId: 3, rateMultiplier: 0.05, avgTtftMs: 500 }),
+		];
+		await h.daemon.runOnce();
+		const active = [];
+		try {
+			for (let index = 0; index < 6; index++) {
+				active.push((await h.daemon.route({ sessionKey: `speed-${index}` }))!);
+			}
+			expect(new Set(active.map((key) => key.groupId)).size).toBeGreaterThan(1);
+		} finally {
+			for (const key of active) key.release?.();
+		}
+	});
+});
+
+describe("手动锁定", () => {
+	test("锁定覆盖软门槛,保留连续会话,失败可逃生且 revision 防旧操作", async () => {
+		h = createHarness({
+			withServer: true,
+			configPatch: { keyMode: "pool", mode: "economy" },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 2000 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.05, avgTtftMs: 30_000 }),
+			makeStat({ groupId: 3, rateMultiplier: 0.2, avgTtftMs: 1000 }),
+		];
+		await h.daemon.runOnce();
+		expect(
+			h.daemon.lastRound?.evaluation.excluded.find(
+				(candidate) => candidate.stat.groupId === 2,
+			)?.excludeReason,
+		).toBe("economy_too_slow");
+		h.affinity.bind("existing", 1);
+		const base = h.serverUrl!;
+
+		const locked = await fetch(`${base}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: 2, expectedRevision: 0 }),
+		});
+		expect(locked.status).toBe(200);
+		expect(h.state.manualLock).toEqual({ groupId: 2, revision: 1 });
+		expect(h.state.currentGroupId).toBe(2);
+
+		const fresh = await h.daemon.route({ sessionKey: "fresh" });
+		expect(fresh?.groupId).toBe(2);
+		fresh?.release?.();
+		const existing = await h.daemon.route({
+			sessionKey: "existing",
+			continuity: true,
+		});
+		expect(existing?.groupId).toBe(1);
+		existing?.release?.();
+		const escaped = await h.daemon.route({
+			sessionKey: "escaped",
+			failedGroupIds: [2],
+		});
+		expect(escaped?.groupId).toBe(1);
+		escaped?.release?.();
+
+		const hardInvalid = await fetch(`${base}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: 3, expectedRevision: 1 }),
+		});
+		expect(hardInvalid.status).toBe(409);
+		expect(h.state.manualLock.revision).toBe(1);
+		const stale = await fetch(`${base}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: 1, expectedRevision: 0 }),
+		});
+		expect(stale.status).toBe(409);
+
+		const released = await fetch(`${base}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: null, expectedRevision: 1 }),
+		});
+		expect(released.status).toBe(200);
+		expect(h.state.manualLock).toEqual({ groupId: null, revision: 2 });
+		const automatic = await h.daemon.route({ sessionKey: "automatic" });
+		expect(automatic?.groupId).toBe(1);
+		automatic?.release?.();
+	});
+
+	test("零倍率组存在时仍可显式锁定硬资格正常的付费组", async () => {
+		h = createHarness({
+			withServer: true,
+			configPatch: { keyMode: "pool", mode: "balanced" },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0, avgTtftMs: 1000 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.05, avgTtftMs: 2000 }),
+		];
+		await h.daemon.runOnce();
+		const response = await fetch(`${h.serverUrl}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: 2, expectedRevision: 0 }),
+		});
+		expect(response.status).toBe(200);
+		expect(h.state.currentGroupId).toBe(2);
+		const routed = await h.daemon.route({ sessionKey: "paid-lock" });
+		expect(routed?.groupId).toBe(2);
+		routed?.release?.();
+		const status = (await fetch(`${h.serverUrl}/ctl/status`).then((item) =>
+			item.json(),
+		)) as {
+			manualLock: {
+				groupId: number | null;
+				revision: number;
+				effective: boolean;
+			};
+		};
+		expect(status.manualLock).toMatchObject({
+			groupId: 2,
+			revision: 1,
+			effective: true,
+		});
+	});
+
+	test("配置更新后锁定资格按当前黑名单重算,不接受旧轮次候选", async () => {
+		h = createHarness({
+			withServer: true,
+			configPatch: { keyMode: "pool", mode: "balanced" },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 1000 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.05, avgTtftMs: 2000 }),
+		];
+		await h.daemon.runOnce();
+		const configResponse = await fetch(`${h.serverUrl}/ctl/config`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ blacklist: [2] }),
+		});
+		expect(configResponse.status).toBe(200);
+		const lockResponse = await fetch(`${h.serverUrl}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: 2, expectedRevision: 0 }),
+		});
+		expect(lockResponse.status).toBe(409);
+		expect(await lockResponse.json()).toMatchObject({ reason: "blacklisted" });
+		expect(h.state.manualLock).toEqual({ groupId: null, revision: 0 });
+	});
+
+	test("旧守护轮与锁定更新串行,锁定成功后不会被过期决策覆盖", async () => {
+		h = createHarness({
+			withServer: true,
+			configPatch: { keyMode: "pool", mode: "balanced" },
+		});
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 500 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.05, avgTtftMs: 3000 }),
+		];
+		await h.executor.switchTo(2);
+		await h.daemon.runOnce({ dryRun: true });
+
+		const originalSwitchTo = h.executor.switchTo.bind(h.executor);
+		let releaseSwitch!: () => void;
+		const switchGate = new Promise<void>((resolve) => {
+			releaseSwitch = resolve;
+		});
+		let enteredSwitch!: () => void;
+		const switchEntered = new Promise<void>((resolve) => {
+			enteredSwitch = resolve;
+		});
+		let pauseAutomatic = true;
+		h.executor.switchTo = async (groupId) => {
+			if (pauseAutomatic && groupId === 1) {
+				pauseAutomatic = false;
+				enteredSwitch();
+				await switchGate;
+			}
+			return originalSwitchTo(groupId);
+		};
+
+		const oldRound = h.daemon.runOnce();
+		await switchEntered;
+		const lockRequest = fetch(`${h.serverUrl}/ctl/route-lock`, {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ groupId: 2, expectedRevision: 0 }),
+		});
+		await Bun.sleep(20);
+		expect(h.state.manualLock.revision).toBe(0);
+		releaseSwitch();
+		await oldRound;
+		const locked = await lockRequest;
+		expect(locked.status).toBe(200);
+		expect(h.state.manualLock).toEqual({ groupId: 2, revision: 1 });
+		expect(h.state.currentGroupId).toBe(2);
+	});
+
+	test("single 模式锁定全局 Key,锁组失败后本请求可切备用组", async () => {
+		h = createHarness({ configPatch: { keyMode: "single", mode: "balanced" } });
+		h.mock.stats = [
+			makeStat({ groupId: 1, rateMultiplier: 0.02, avgTtftMs: 1000 }),
+			makeStat({ groupId: 2, rateMultiplier: 0.05, avgTtftMs: 2000 }),
+		];
+		h.mock.keys.set(11, {
+			id: 11,
+			name: "manual",
+			key: "sk-user-11",
+			group_id: 1,
+		});
+		h.state.manualLock = { groupId: 2, revision: 1 };
+		await h.daemon.runOnce();
+		const locked = await h.daemon.route({});
+		expect(locked?.groupId).toBe(2);
+		const escaped = await h.daemon.route({ failedGroupIds: [2] });
+		expect(escaped?.groupId).toBe(1);
+		expect(h.state.manualLock).toEqual({ groupId: 2, revision: 1 });
 	});
 });
 
@@ -256,11 +532,19 @@ describe("控制台 API", () => {
 			configPatch: { keyMode: "pool", mode: "economy" },
 		});
 		h.mock.stats = [
-			makeStat({ groupId: 1, rateMultiplier: 0.03, avgTtftMs: 1500 }),
+			makeStat({
+				groupId: 1,
+				rateMultiplier: 0.03,
+				avgTtftMs: 1500,
+				cloudProbeTtftMs: 1000,
+				userAvgTtftMs: 2000,
+				userSampleCount: 50,
+			}),
 			makeStat({ groupId: 2, rateMultiplier: 0.2, avgTtftMs: 900 }), // 出价格区间 ⇒ excluded
 			makeStat({ groupId: 3, rateMultiplier: 0.01, avgTtftMs: 30_000 }), // 超过省钱延迟门槛
 		];
 		h.observations.recordSuccess(1, 1_000);
+		h.observations.recordLatency(1, 1500);
 		const base = h.serverUrl!;
 
 		// route-once
@@ -292,6 +576,11 @@ describe("控制台 API", () => {
 				excludeReason?: string;
 				ttft?: number;
 				conservative?: number;
+				cloudProbeTtft?: number;
+				userTtft?: number;
+				userSamples?: number;
+				upstreamTtft?: number;
+				localTtft?: number;
 				successRate?: number;
 				outcomeSamples?: number;
 			}[];
@@ -319,6 +608,13 @@ describe("控制台 API", () => {
 		h.traffic.end(1);
 		expect(status.hasToken).toBe(true);
 		const eligible = status.candidates.find((c) => c.groupId === 1);
+		expect(eligible).toMatchObject({
+			cloudProbeTtft: 1000,
+			userTtft: 2000,
+			userSamples: 50,
+			upstreamTtft: 1414,
+			localTtft: 1500,
+		});
 		expect(eligible?.successRate).toBe(1);
 		expect(eligible?.outcomeSamples).toBe(1);
 		const excluded = status.candidates.find((c) => c.groupId === 2);
@@ -362,6 +658,20 @@ describe("控制台 API", () => {
 			minSuccessRate: 0.85,
 			maxConservativeLatencyMs: 40_000,
 		});
+		const uaRes = await fetch(`${base}/ctl/config`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ upstreamUserAgent: "BenefitClient/2.0" }),
+		});
+		expect(uaRes.status).toBe(200);
+		expect(h.config.upstreamUserAgent).toBe("BenefitClient/2.0");
+		const badUaRes = await fetch(`${base}/ctl/config`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ upstreamUserAgent: "bad\r\nheader" }),
+		});
+		expect(badUaRes.status).toBe(400);
+		expect(h.config.upstreamUserAgent).toBe("BenefitClient/2.0");
 
 		const restartRes = await fetch(`${base}/ctl/config`, {
 			method: "POST",

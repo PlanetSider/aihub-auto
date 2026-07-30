@@ -80,6 +80,30 @@ describe("decide 基本路径", () => {
 		expect(d.shouldSwitch).toBe(true);
 	});
 
+	test("切换原因使用账号实际倍率而非公开倍率", () => {
+		const evaluation = evaluate(
+			[
+				stat({ groupId: 1, rateMultiplier: 0.2, avgTtftMs: 1000 }),
+				stat({ groupId: 2, rateMultiplier: 0.01, avgTtftMs: 10_000 }),
+			],
+			opts({ mode: "balanced" }),
+			undefined,
+			new Map([
+				[1, 0.01],
+				[2, 0.1],
+			]),
+		);
+		const decision = decide(
+			evaluation,
+			{ currentGroupId: 2 },
+			{ ...policy, stickiness: 0, cachePenaltyMax: 0, minDwellMs: 0 },
+			idleTraffic(),
+			NOW,
+		);
+		expect(decision.targetGroupId).toBe(1);
+		expect(decision.reason).toBe("better_price");
+	});
+
 	test("已是最优 ⇒ already_optimal,清 pendingSwitch", () => {
 		const e = ev();
 		const top = e.eligible[0]!.stat.groupId;
@@ -207,6 +231,38 @@ describe("粘性与缓存感知", () => {
 		expect(d.nextState.pendingSwitch?.groupId).toBe(
 			e.eligible[0]!.stat.groupId,
 		);
+	});
+
+	test("对数门槛在三模式均表示同一复合效用比例", () => {
+		const cases = [
+			{ mode: "economy" as const, heldRatio: 5, switchedRatio: 6 },
+			{ mode: "balanced" as const, heldRatio: 2, switchedRatio: 2.1 },
+			{ mode: "speed" as const, heldRatio: 1.5, switchedRatio: 1.6 },
+		];
+		for (const item of cases) {
+			const route = (latencyRatio: number) => {
+				const evaluation = evaluate(
+					[
+						stat({ groupId: 1, rateMultiplier: 0.05, avgTtftMs: 1000 }),
+						stat({
+							groupId: 2,
+							rateMultiplier: 0.05,
+							avgTtftMs: 1000 * latencyRatio,
+						}),
+					],
+					opts({ mode: item.mode }),
+				);
+				return decide(
+					evaluation,
+					{ currentGroupId: 2 },
+					{ ...policy, minDwellMs: 0 },
+					activeTraffic(),
+					NOW,
+				);
+			};
+			expect(route(item.heldRatio).reason).toBe("hold_cache");
+			expect(route(item.switchedRatio).shouldSwitch).toBe(true);
+		}
 	});
 });
 

@@ -11,7 +11,7 @@
     },
     "apps/router": {
       "name": "@aihub-auto/router",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "dependencies": {
         "@aihub-auto/core": "workspace:*",
         "zod": "^4.4.3",
@@ -19,11 +19,11 @@
     },
     "packages/core": {
       "name": "@aihub-auto/core",
-      "version": "0.2.3",
+      "version": "0.3.0",
     },
     "packages/koishi-plugin-aihub-auto": {
       "name": "koishi-plugin-aihub-auto",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "devDependencies": {
         "@aihub-auto/core": "workspace:*",
         "@koishijs/plugin-http": "^0.6.3",
