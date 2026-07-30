@@ -560,9 +560,12 @@ describe("控制台 API", () => {
 		expect(route.shouldSwitch).toBe(true);
 		expect(route.targetGroupId).toBe(1);
 
-		// status 含候选、排除原因和逐组使用状态
+		// status 含候选、排除原因和逐组使用状态。纯历史亲和保留在汇总,
+		// 但没有 Key/在飞/当前/锁定角色时不占“分组使用”表格行。
 		h.affinity.bind("session-1", 1);
 		h.affinity.bindResponse("resp_1", "session-1", 1);
+		h.affinity.bind("historical-session", 2);
+		h.affinity.bindResponse("resp_historical", "historical-session", 2);
 		h.traffic.begin(1);
 		const statusRes = await fetch(`${base}/ctl/status`);
 		const statusText = await statusRes.text();
@@ -586,6 +589,7 @@ describe("控制台 API", () => {
 			}[];
 			pool: Record<string, { keyId: number; lastUsedAt: number }>;
 			affinity: { sessions: number; responseAliases: number };
+			manualLock: { groupId: number | null; revision: number };
 			groups: Array<{
 				groupId: number;
 				keyId: number | null;
@@ -597,16 +601,23 @@ describe("控制台 API", () => {
 		};
 		expect(status.currentGroupId).toBe(1);
 		expect(status.pool["1"]?.keyId).toBeDefined();
-		expect(status.affinity.sessions).toBe(1);
-		expect(status.affinity.responseAliases).toBe(1);
+		expect(status.affinity.sessions).toBe(2);
+		expect(status.affinity.responseAliases).toBe(2);
+		expect(status.manualLock.groupId).toBeNull();
 		expect(status.groups.find((group) => group.groupId === 1)).toMatchObject({
 			keyId: status.pool["1"]?.keyId,
 			sessions: 1,
 			responseAliases: 1,
 			activeRequests: 1,
 		});
+		expect(status.groups.some((group) => group.groupId === 2)).toBe(false);
 		h.traffic.end(1);
 		expect(status.hasToken).toBe(true);
+
+		const ui = await fetch(`${base}/ui`).then((response) => response.text());
+		expect(ui).toContain("[hidden]{display:none!important}");
+		expect(ui).toContain("个本地运行分组");
+		expect(ui).not.toContain("未入池");
 		const eligible = status.candidates.find((c) => c.groupId === 1);
 		expect(eligible).toMatchObject({
 			cloudProbeTtft: 1000,

@@ -247,7 +247,14 @@ export async function handleControl(
 					),
 					cacheProtected,
 				};
-			});
+			})
+			.filter(
+				(group) =>
+					group.current ||
+					group.keyId !== null ||
+					group.activeRequests > 0 ||
+					group.groupId === deps.state.manualLock.groupId,
+			);
 		const currentCode = candidateByGroup.get(
 			deps.state.currentGroupId ?? -1,
 		)?.code;

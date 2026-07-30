@@ -10,6 +10,7 @@
 - [x] Add a model-proxy-only upstream User-Agent override while preserving the caller value when unset.
 - [x] Serialize the full shared-Key response lifetime and control-plane switches with a FIFO lease in `single` mode; keep `pool` mode same-group concurrency unrestricted.
 - [x] Optimize the operations console: expose three-source TTFT provenance, effective rates, candidate exclusions, sessions, Responses branches, active requests, pool retention, authenticated controls, and manual lock actions.
+- [x] Hide the manual-lock banner when no lock exists and limit the usage table to current, pooled, locked, or in-flight groups instead of listing historical unpooled affinity.
 - [x] Reclaim managed pool keys periodically while preserving active/session-bound keys and restart reuse.
 - [x] Prevent same-account router instances from deleting each other's unknown managed Keys; on upstream 401, CAS-invalidate the rejected `sk`, rebuild the group Key, and retry before response commit.
 - [ ] Publish `koishi-plugin-aihub-auto@0.3.0` with `最优分组`, a single highest-rate/slowest-TTFT `最烂分组`, and three-source public TTFT fusion (blocked until npm authentication is restored).

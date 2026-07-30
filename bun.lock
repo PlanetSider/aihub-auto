@@ -11,7 +11,7 @@
     },
     "apps/router": {
       "name": "@aihub-auto/router",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "dependencies": {
         "@aihub-auto/core": "workspace:*",
         "zod": "^4.4.3",
