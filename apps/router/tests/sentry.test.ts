@@ -69,7 +69,8 @@ describe("Sentry 过滤边界", () => {
 
 	test("publicOrigin 只接受无路径的完整 HTTP(S) origin", () => {
 		expect(
-			ConfigSchema.parse({ publicOrigin: "https://router.example" }).publicOrigin,
+			ConfigSchema.parse({ publicOrigin: "https://router.example" })
+				.publicOrigin,
 		).toBe("https://router.example");
 		for (const publicOrigin of [
 			"https://router.example/path",

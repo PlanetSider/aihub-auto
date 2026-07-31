@@ -38,6 +38,7 @@ export interface Harness {
 	proxyDeps: ProxyDeps;
 	server?: ReturnType<typeof createServer>;
 	serverUrl?: string;
+	configDir: string;
 	dispose: () => void;
 }
 
@@ -194,6 +195,7 @@ export function createHarness(opts?: {
 		proxyDeps,
 		server,
 		serverUrl,
+		configDir: dir,
 		dispose: () => {
 			daemon.stop();
 			server?.stop(true);

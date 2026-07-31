@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { connect } from "node:net";
-import { handleProxy } from "../src/proxy.ts";
+import { handleProxy, isBillingErrorResponse } from "../src/proxy.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { makeStat } from "./mock-upstream.ts";
 
@@ -45,6 +45,39 @@ function sessionReq(session: string, model = "gpt-test"): Request {
 		}),
 	});
 }
+
+describe("账单错误识别", () => {
+	test("只接受明确的余额不足信号", async () => {
+		expect(
+			await isBillingErrorResponse(
+				new Response('{"error":{"message":"余额不足"}}', { status: 403 }),
+			),
+		).toBe(true);
+		expect(
+			await isBillingErrorResponse(
+				new Response('{"error":{"message":"余额正常"}}', { status: 403 }),
+			),
+		).toBe(false);
+	});
+
+	test("前缀读取超时不等待未结束错误流", async () => {
+		const response = new Response(
+			new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(
+						new TextEncoder().encode(
+							'{"error":{"message":"insufficient balance"}}',
+						),
+					);
+				},
+			}),
+			{ status: 403 },
+		);
+		const started = performance.now();
+		expect(await isBillingErrorResponse(response)).toBe(true);
+		expect(performance.now() - started).toBeLessThan(800);
+	});
+});
 
 describe("反代基础", () => {
 	test("未配置 Key ⇒ 503 且提示", async () => {
@@ -364,6 +397,32 @@ describe("故障转移", () => {
 		const res = await handleProxy(proxyReq(), h.proxyDeps);
 		expect(res.status).toBe(200);
 		expect(res.headers.get("x-aihub-auto-group")).toBe("2");
+	});
+
+	test("上游余额不足 403 ⇒ 记失败并换组", async () => {
+		h = await setupRouted();
+		h.mock.behavior.groups.set(1, {
+			status: 403,
+			body: '{"error":{"message":"insufficient balance","type":"billing_error"}}',
+		});
+		const res = await handleProxy(proxyReq(), h.proxyDeps);
+		expect(res.status).toBe(200);
+		expect(res.headers.get("x-aihub-auto-group")).toBe("2");
+		expect(h.observations.getObservation(1)!.errorRate).toBeGreaterThan(0);
+	});
+
+	test("非账单 403(如内容过滤)如实透传不换组", async () => {
+		h = await setupRouted();
+		h.mock.behavior.groups.set(1, {
+			status: 403,
+			body: '{"error":{"message":"The response was filtered","type":"content_policy"}}',
+		});
+		const res = await handleProxy(proxyReq(), h.proxyDeps);
+		expect(res.status).toBe(403);
+		expect(res.headers.get("x-aihub-auto-group")).toBe("1");
+		expect(
+			((await res.json()) as { error: { message: string } }).error.message,
+		).toContain("filtered");
 	});
 
 	test("全部候选失败 ⇒ 返回最后上游错误", async () => {

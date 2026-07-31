@@ -1,6 +1,6 @@
 # aihub-auto
 
-让 OpenAI 兼容客户端通过本地地址使用 [AIHub](https://aihub.top)，并自动选择合适分组的跨平台反向代理。
+让 OpenAI 兼容客户端通过本地地址使用 [AIHub](https://aihub.top)，并自动选择合适分组的跨平台反向代理。Windows、macOS 和 Linux 提供带托盘与 minisign 验证更新的 Tauri 桌面应用，也保留无需安装的 standalone 路由器。
 
 它适合已经有 AIHub 账号、希望减少手动切组，同时保留连续对话缓存的人。启动后，客户端只需要访问本机 `http://127.0.0.1:8787/v1`；登录、Key 创建、分组选择、故障转移和运行日志由 aihub-auto 在本机处理。
 
@@ -8,9 +8,9 @@
 
 ## 五分钟开始
 
-1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载与你的系统和 CPU 架构匹配的压缩包并解压。
-2. 启动程序：Windows 双击 `aihub-auto.exe`；Linux/macOS 在终端运行 `./aihub-auto`。首次启动无需手工创建配置文件。
-3. 打开 <http://127.0.0.1:8787/ui>，登录 AIHub 账号或粘贴 Access Token。
+1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载桌面安装包：Windows 使用 NSIS 安装器，macOS 使用 DMG，Linux x64 使用 AppImage。需要无界面部署时改下对应平台的 standalone ZIP。
+2. 启动 `aihub-auto` 桌面应用。它会启动内置路由器并在健康检查通过后打开窗口；关闭窗口后仍在系统托盘运行。standalone 版本则直接运行压缩包中的 `aihub-auto`/`aihub-auto.exe`。
+3. 按首次使用向导登录 AIHub 账号或粘贴 Access Token。standalone 版本也可打开 <http://127.0.0.1:8787/ui>。
 4. 将你的 OpenAI 兼容客户端指向本地代理：
 
 ```bash
@@ -39,6 +39,14 @@ AIHUB_AUTO_PORT=9000 ./aihub-auto
 | <http://127.0.0.1:8787/healthz> | 存活检查 |
 | <http://127.0.0.1:8787/v1/models> | 验证客户端可通过代理读取模型 |
 | <http://127.0.0.1:8787/v1> | 本地 API 状态响应，不会转发到上游 |
+
+## 桌面应用
+
+桌面窗口复用同一套本地控制台，不复制代理或路由逻辑。应用启动时先拉起 bundled Bun sidecar，再等待 `/healthz` 返回 200；端口占用或 sidecar 启动失败时显示本地诊断页。开发构建默认使用 8798，正式构建使用 8787，避免调试时打断正在使用的正式路由器。
+
+关闭主窗口只会隐藏到托盘。托盘菜单提供显示窗口、运行日志、检查更新和明确退出；退出时同时停止 sidecar。日志页通过已鉴权的 `/ctl/logs` 读取 `app.log` 最近 500 行，服务端限制为最多 1000 行/512 KiB 并再次脱敏，支持级别/文本筛选与暂停自动刷新。
+
+桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。发布仍同时附带 standalone ZIP，桌面环境或更新器不可用时可直接回退。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
 
 ## 日常使用
 
@@ -109,6 +117,7 @@ npm i koishi-plugin-aihub-auto
 | 目录 | 说明 |
 | --- | --- |
 | [`apps/router`](apps/router) | 跨平台单文件反代、自动 Key 池、会话亲和、请求内故障转移和 Web 控制台 |
+| [`apps/desktop`](apps/desktop) | Tauri 2 原生窗口、sidecar 生命周期、托盘与 minisign 验证更新 |
 | [`packages/koishi-plugin-aihub-auto`](packages/koishi-plugin-aihub-auto) | Koishi 最优/最烂分组查询插件 |
 | [`packages/core`](packages/core) | 共享评分、决策、熔断和本地观测核心，无运行时依赖 |
 
@@ -116,8 +125,11 @@ npm i koishi-plugin-aihub-auto
 
 ```bash
 bun install
-bun run check        # 全部测试和类型检查
-bun scripts/build.ts # 构建六个目标到 artifacts/
+bun run check          # 全部 Bun 测试和 TypeScript 检查
+bun run desktop:sidecar # 构建当前 Rust target 的 bundled router
+bun run desktop:dev     # Tauri 开发窗口，默认路由端口 8798
+bun run desktop:build   # Tauri 安装包；更新签名需要 TAURI_SIGNING_PRIVATE_KEY
+bun scripts/build.ts   # 构建 standalone 六目标到 artifacts/
 ```
 
 算法、并发语义和故障转移细节见 [核心算法说明](packages/core/ALGORITHM.md)。

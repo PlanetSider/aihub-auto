@@ -604,6 +604,11 @@ describe("控制台 API", () => {
 				activeRequests: number;
 			}>;
 			hasToken: boolean;
+			config: {
+				listen: { host: string; port: number };
+				proxyAuthRequired: boolean;
+				uiAuthRequired: boolean;
+			};
 		};
 		expect(status.currentGroupId).toBe(1);
 		expect(status.pool["1"]?.keyId).toBeDefined();
@@ -623,6 +628,22 @@ describe("控制台 API", () => {
 		expect(status.groups.some((group) => group.groupId === 2)).toBe(false);
 		h.traffic.end(1);
 		expect(status.hasToken).toBe(true);
+		expect(status.config).toMatchObject({
+			listen: { host: "127.0.0.1", port: 0 },
+			proxyAuthRequired: false,
+			uiAuthRequired: false,
+		});
+
+		await Bun.write(
+			`${h.configDir}/app.log`,
+			"2026-07-31T00:00:00.000Z [INFO] first\n2026-07-31T00:00:01.000Z [WARN] Bearer secret-token-value\n",
+		);
+		const logs = (await fetch(`${base}/ctl/logs?limit=1`).then((response) =>
+			response.json(),
+		)) as { lines: string[]; at: number };
+		expect(logs.lines).toEqual(["2026-07-31T00:00:01.000Z [WARN] Bearer ***"]);
+		expect(logs.at).toBeNumber();
+		expect((await fetch(`${base}/ctl/logs?limit=1001`)).status).toBe(400);
 
 		const ui = await fetch(`${base}/ui`).then((response) => response.text());
 		expect(ui).toContain("[hidden]{display:none!important}");
@@ -630,7 +651,7 @@ describe("控制台 API", () => {
 		expect(ui).not.toContain("未入池");
 		expect(ui).toContain("bundle.feedback.min.js");
 		expect(ui).toContain(
-			'feedbackIntegration({autoInject:false,colorScheme:"system"})',
+			'feedbackIntegration({autoInject:false,colorScheme:"system",styleNonce:CSP_NONCE})',
 		);
 		expect(ui).toContain("defaultIntegrations:false");
 		expect(ui).toContain("cookies:false");
@@ -638,6 +659,20 @@ describe("控制台 API", () => {
 		expect(ui).toContain("beforeSendFeedback(event)");
 		expect(ui).toContain("location.origin+location.pathname");
 		expect(ui).toContain("Sentry.getFeedback()?.attachTo(button)");
+		expect(ui).toContain("连接你的第一个客户端");
+		expect(ui).toContain("/ctl/logs?limit=500");
+		expect(ui).toContain("desktop-open-logs");
+		expect(ui).toContain("https://github.com/WSXYT/aihub-auto");
+		expect(ui).toContain('aria-current="page"');
+		expect(ui).toContain('tabindex="0" role="region"');
+		expect(ui).toContain('role="progressbar"');
+		expect(ui).toContain(
+			'const GUIDE_DISMISSED_KEY="aihub-auto.guide-dismissed"',
+		);
+		expect(ui).toContain('$("#refresh").focus()');
+		expect(ui).toContain(
+			'$("#guideLogin").addEventListener("click",()=>{$("#email").focus()',
+		);
 		const eligible = status.candidates.find((c) => c.groupId === 1);
 		expect(eligible).toMatchObject({
 			cloudProbeTtft: 1000,
@@ -755,6 +790,7 @@ describe("控制台 API", () => {
 		});
 		const base = h.serverUrl!;
 		expect((await fetch(`${base}/ctl/status`)).status).toBe(401);
+		expect((await fetch(`${base}/ctl/logs`)).status).toBe(401);
 		expect(
 			(
 				await fetch(`${base}/ctl/status`, {
@@ -797,7 +833,10 @@ describe("控制台 API", () => {
 		expect(ui.headers.get("x-content-type-options")).toBe("nosniff");
 		expect(ui.headers.get("referrer-policy")).toBe("no-referrer");
 		expect(html).toContain("aihub-auto");
-		expect(html).not.toContain("localStorage");
+		expect(html).toContain(
+			'const GUIDE_DISMISSED_KEY="aihub-auto.guide-dismissed"',
+		);
+		expect(html).toContain("styleNonce:CSP_NONCE");
 		expect(html).not.toContain("sessionStorage");
 
 		const ctl = await fetch(`${base}/ctl/status`, {

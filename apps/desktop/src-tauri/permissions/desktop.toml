@@ -1,0 +1,29 @@
+[[permission]]
+identifier = "allow-desktop-info"
+description = "Expose desktop version, port and config metadata."
+commands.allow = ["desktop_info"]
+
+[[permission]]
+identifier = "allow-open-github"
+description = "Open the fixed aihub-auto GitHub project URL."
+commands.allow = ["open_github"]
+
+[[permission]]
+identifier = "allow-reveal-logs"
+description = "Reveal the local aihub-auto application log."
+commands.allow = ["reveal_logs"]
+
+[[permission]]
+identifier = "allow-check-for-update"
+description = "Check the signed aihub-auto update manifest."
+commands.allow = ["check_for_update"]
+
+[[permission]]
+identifier = "allow-install-update"
+description = "Install a verified aihub-auto update and restart."
+commands.allow = ["install_update"]
+
+[[permission]]
+identifier = "allow-restart-desktop"
+description = "Restart the desktop application after a startup failure."
+commands.allow = ["restart_desktop"]

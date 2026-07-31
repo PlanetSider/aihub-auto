@@ -17,6 +17,8 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 
 之后一切照旧——代理在幕后持续选择最优分组。
 
+桌面用户可直接安装 Release 中的 Tauri 版本：桌面窗口内置本路由器作为 sidecar，启动健康检查通过后打开同一套控制台，关闭窗口后转入托盘。托盘可重新显示窗口、打开实时日志、检查签名更新或明确退出。NSIS/DMG/AppImage 与 standalone ZIP 同时发布；无界面环境继续使用本页的 standalone 方式。
+
 ## 策略
 
 | 模式 | 选择规则 |
@@ -100,6 +102,6 @@ Linux x64 发行包采用 Bun 的 `bun-linux-x64-baseline` 目标，支持不具
 ## 安全边界
 
 - 默认仅监听 127.0.0.1,凭据仅存本机(POSIX 下 0600),日志脱敏;`/ctl/status` 只返回 Key 元数据,不返回 `sk`
-- 配置目录内 `app.log` 默认记录运行日志(5 MiB × 当前+3 个历史),`crash.log` 记录生命周期和未处理异常(1 MiB × 当前+3 个历史)。直接双击 Windows EXE 使用 `%LocalAppData%\\aihub-auto`;通过 `AIHUB_AUTO_CONFIG_DIR` 可显式指定其他目录
+- 配置目录内 `app.log` 默认记录运行日志(5 MiB × 当前+3 个历史),`crash.log` 记录生命周期和未处理异常(1 MiB × 当前+3 个历史)。控制台日志页通过受 `uiPassword` 保护的 `/ctl/logs` 最多读取 1000 行/512 KiB，并在返回前再次脱敏。直接双击 Windows EXE 使用 `%LocalAppData%\\aihub-auto`;通过 `AIHUB_AUTO_CONFIG_DIR` 可显式指定其他目录
 - 监听 `0.0.0.0` 时强制要求 `proxyToken` + `uiPassword`,否则拒绝启动(防止别人烧你的额度);客户端此时用 `OPENAI_API_KEY=<proxyToken>` 访问
 - 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用;反向代理需保留原始 Host,并将 `publicOrigin` 设置为唯一对外 HTTPS origin

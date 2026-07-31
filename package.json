@@ -9,7 +9,10 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json",
-    "check": "bun test && bunx tsc --noEmit -p tsconfig.json"
+    "check": "bun test && bunx tsc --noEmit -p tsconfig.json",
+    "desktop:sidecar": "bun scripts/prepare-desktop-sidecar.ts",
+    "desktop:dev": "bun --cwd apps/desktop tauri dev",
+    "desktop:build": "bun --cwd apps/desktop tauri build"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

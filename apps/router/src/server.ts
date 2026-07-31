@@ -1,10 +1,11 @@
 import type { AIHubClient, ExcludeReason } from "@aihub-auto/core";
+import { join } from "node:path";
 import type { AppConfig, AppState, Credentials, FileStore } from "./config.ts";
 import { ConfigSchema } from "./config.ts";
 import type { RouteDaemon } from "./daemon.ts";
 import type { RouteExecutor } from "./executor.ts";
 import { handleProxy, type ProxyDeps } from "./proxy.ts";
-import type { Logger } from "./logger.ts";
+import { redact, type Logger } from "./logger.ts";
 import { captureRouterException } from "./sentry.ts";
 import { renderUi } from "./ui.ts";
 
@@ -123,6 +124,19 @@ function ctlAuthorized(req: Request, config: AppConfig): boolean {
 	return diff === 0;
 }
 
+const MAX_LOG_BYTES = 512 * 1024;
+
+async function readLogTail(path: string, limit: number): Promise<string[]> {
+	const file = Bun.file(path);
+	if (!(await file.exists())) return [];
+	const start = Math.max(0, file.size - MAX_LOG_BYTES);
+	const text = await file.slice(start).text();
+	const lines = text.split(/\r?\n/);
+	if (start > 0) lines.shift();
+	if (lines.at(-1) === "") lines.pop();
+	return lines.slice(-limit).map(redact);
+}
+
 export async function handleControl(
 	req: Request,
 	url: URL,
@@ -132,6 +146,18 @@ export async function handleControl(
 		return json({ error: "需要控制台口令(x-ui-password)" }, 401);
 	}
 	const path = url.pathname;
+
+	if (path === "/ctl/logs" && req.method === "GET") {
+		const rawLimit = url.searchParams.get("limit") ?? "500";
+		const limit = Number(rawLimit);
+		if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+			return json({ error: "limit 必须是 1 到 1000 的整数" }, 400);
+		}
+		return json({
+			lines: await readLogTail(join(deps.store.dir, "app.log"), limit),
+			at: Date.now(),
+		});
+	}
 
 	if (path === "/ctl/status" && req.method === "GET") {
 		const now = Date.now();
@@ -343,6 +369,9 @@ export async function handleControl(
 			currentGroupId: deps.state.currentGroupId ?? null,
 			currentCode: currentCode ?? null,
 			config: {
+				listen: deps.config.listen,
+				proxyAuthRequired: Boolean(deps.config.proxyToken),
+				uiAuthRequired: Boolean(deps.config.uiPassword),
 				mode: deps.config.mode,
 				keyMode: deps.config.keyMode,
 				poolMaxGroups: deps.config.poolMaxGroups,

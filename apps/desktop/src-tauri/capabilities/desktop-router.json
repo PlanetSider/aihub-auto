@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "desktop-router",
+  "description": "Desktop commands available to the trusted local router UI",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:8787/ui*",
+      "http://127.0.0.1:8798/ui*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "allow-desktop-info",
+    "allow-open-github",
+    "allow-reveal-logs",
+    "allow-check-for-update",
+    "allow-install-update"
+  ]
+}

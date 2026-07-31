@@ -52,7 +52,10 @@ function isHttpOrigin(value: string): boolean {
 
 export const PublicOriginSchema = z.union([
 	z.literal(""),
-	z.string().url().refine(isHttpOrigin, "必须是完整 HTTP(S) origin,不得包含路径"),
+	z
+		.string()
+		.url()
+		.refine(isHttpOrigin, "必须是完整 HTTP(S) origin,不得包含路径"),
 ]);
 
 export const ConfigSchema = z.object({

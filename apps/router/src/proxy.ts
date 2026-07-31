@@ -211,12 +211,17 @@ async function responsePrefix(
 		while (size < limit) {
 			const remaining = deadline - Date.now();
 			if (remaining <= 0) break;
-			const result = await Promise.race([
-				reader.read(),
-				new Promise<{ done: true; value?: undefined }>((resolve) =>
-					setTimeout(() => resolve({ done: true }), remaining),
-				),
-			]);
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const timeout = new Promise<{ done: true; value?: undefined }>(
+				(resolve) => {
+					timer = setTimeout(() => resolve({ done: true }), remaining);
+				},
+			);
+			const result = await Promise.race([reader.read(), timeout]).finally(
+				() => {
+					if (timer !== undefined) clearTimeout(timer);
+				},
+			);
 			if (result.done || !result.value) break;
 			const chunk = result.value.subarray(0, Math.max(limit - size, 0));
 			chunks.push(chunk);
@@ -224,7 +229,8 @@ async function responsePrefix(
 			if (chunk.byteLength < result.value.byteLength) break;
 		}
 	} finally {
-		await reader.cancel().catch(() => {});
+		// A tee branch can wait for the original response forever; detection is best-effort.
+		void reader.cancel().catch(() => {});
 	}
 	const joined = new Uint8Array(size);
 	let offset = 0;
@@ -233,6 +239,19 @@ async function responsePrefix(
 		offset += chunk.byteLength;
 	}
 	return new TextDecoder().decode(joined);
+}
+
+/** 上游余额不足信号(组级账单故障,应换组并记失败)。 */
+const BILLING_ERROR_PATTERN =
+	/insufficient[^"]{0,40}balance|billing_error|insufficient_quota|no\s+balance|out\s*of\s*(?:api\s*)?(?:credits|quota)|quota\s*exceeded|余额(?:不足|已用尽)|没有余额/i;
+
+export async function isBillingErrorResponse(
+	response: Response,
+): Promise<boolean> {
+	if (response.status !== 403) return false;
+	const text = await responsePrefix(response, MAX_ERROR_BYTES);
+	if (!text) return false;
+	return BILLING_ERROR_PATTERN.test(text);
 }
 
 /** 只学习强模型能力信号;普通 400/404 不得污染 capability cache。 */
@@ -582,6 +601,20 @@ async function handleProxyRequest(
 					`模型 ${context.model} 在上游组 ${groupId} 不可用`,
 				);
 				void response.body?.cancel().catch(() => {});
+				if (!retriable) break;
+				continue;
+			}
+			if (response.status === 403 && (await isBillingErrorResponse(response))) {
+				finishTtfb();
+				lastError = upstreamErrorResponse(
+					response,
+					groupId,
+					`上游余额不足(组 ${groupId})`,
+				);
+				void response.body?.cancel().catch(() => {});
+				deps.logger.warn(`上游余额不足 group=${groupId} attempt=${attempt}`);
+				markFailure(groupId);
+				mayUpdateBinding = rollbackActive();
 				if (!retriable) break;
 				continue;
 			}

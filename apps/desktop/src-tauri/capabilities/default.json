@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop-local",
+  "description": "Native commands available to the bundled startup failure page",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-desktop-info",
+    "allow-open-github",
+    "allow-restart-desktop"
+  ]
+}

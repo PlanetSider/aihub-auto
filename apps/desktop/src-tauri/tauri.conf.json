@@ -1,0 +1,43 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "aihub-auto",
+  "version": "0.4.0",
+  "identifier": "io.github.wsxyt.aihub-auto",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeDevCommand": "bun ../../scripts/prepare-desktop-sidecar.ts",
+    "beforeBuildCommand": "bun ../../scripts/prepare-desktop-sidecar.ts"
+  },
+  "app": {
+    "windows": [],
+    "withGlobalTauri": true,
+    "security": {
+      "csp": null,
+      "capabilities": ["desktop-local", "desktop-router"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "externalBin": ["binaries/aihub-auto-router"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJCMjZCQkFFNzU2MUJFRjAKUldUd3ZtRjFycnNtdS81SGxFT3VjeVpPRTVCUXNYUFhHbHFuSGhHR1d5K2xyZkplSGhPVkRCeEkK",
+      "endpoints": [
+        "https://github.com/WSXYT/aihub-auto/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

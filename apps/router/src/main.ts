@@ -41,7 +41,11 @@ async function main(): Promise<void> {
 	}
 	const dir = configDir();
 	const store = new FileStore(dir);
-	const config = applyStartupOptions(await loadConfig(store), startup);
+	let config = applyStartupOptions(await loadConfig(store), startup);
+	// The desktop sidecar must not inherit a standalone LAN bind from config.json.
+	if (process.env["AIHUB_AUTO_DESKTOP"] === "1") {
+		config = { ...config, listen: { ...config.listen, host: "127.0.0.1" } };
+	}
 	const state = await loadState(store);
 	const credentials = await loadCredentials(store);
 	const sentryDsn = SentryDsnSchema.parse(
@@ -335,6 +339,23 @@ async function main(): Promise<void> {
 	};
 	process.on("SIGINT", () => void shutdown("SIGINT"));
 	process.on("SIGTERM", () => void shutdown("SIGTERM"));
+	const desktopShutdownToken = process.env["AIHUB_AUTO_DESKTOP_SHUTDOWN_TOKEN"];
+	if (desktopShutdownToken) {
+		let input = "";
+		process.stdin.setEncoding("utf8");
+		process.stdin.on("data", (chunk: string) => {
+			input += chunk;
+			let newline = input.indexOf("\n");
+			while (newline >= 0) {
+				const command = input.slice(0, newline).trimEnd();
+				input = input.slice(newline + 1);
+				if (command === `shutdown ${desktopShutdownToken}`)
+					void shutdown("desktop sidecar");
+				newline = input.indexOf("\n");
+			}
+			if (input.length > 1024) input = input.slice(-1024);
+		});
+	}
 }
 
 main().catch(async (err) => {

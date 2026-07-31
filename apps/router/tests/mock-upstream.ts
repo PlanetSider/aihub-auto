@@ -226,6 +226,12 @@ export class MockAIHub {
 				);
 			}
 			if (b.status && b.status >= 400) {
+				if (b.body !== undefined) {
+					return new Response(b.body, {
+						status: b.status,
+						headers: { "Content-Type": "application/json" },
+					});
+				}
 				const payload = { error: { message: `mock error group ${groupId}` } };
 				if (b.gzip) {
 					return new Response(

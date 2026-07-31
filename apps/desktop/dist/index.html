@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>aihub-auto 启动失败</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #eef1f3;
+        --surface: #fff;
+        --ink: #172027;
+        --muted: #66727a;
+        --line: #d5dce0;
+        --accent: #087b91;
+        --danger: #a53030;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #151819;
+          --surface: #202426;
+          --ink: #edf1f2;
+          --muted: #9da8ae;
+          --line: #3c4448;
+          --accent: #5bb9cc;
+          --danger: #ef7a7a;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          14px/1.55 system-ui,
+          "Segoe UI",
+          sans-serif;
+        letter-spacing: 0;
+      }
+      .shell {
+        width: min(680px, 100%);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        overflow: hidden;
+      }
+      .head {
+        padding: 22px 24px 18px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .mark {
+        width: 38px;
+        height: 38px;
+        display: grid;
+        place-items: center;
+        border-radius: 6px;
+        background: var(--ink);
+        color: var(--surface);
+        font-size: 20px;
+        font-weight: 800;
+      }
+      .head h1 {
+        margin: 0;
+        font-size: 19px;
+      }
+      .head p {
+        margin: 2px 0 0;
+        color: var(--muted);
+      }
+      .body {
+        padding: 22px 24px;
+      }
+      .error {
+        padding: 11px 13px;
+        border-left: 3px solid var(--danger);
+        background: color-mix(in srgb, var(--danger) 9%, transparent);
+        color: var(--danger);
+        overflow-wrap: anywhere;
+      }
+      .facts {
+        margin: 18px 0 0;
+        display: grid;
+        grid-template-columns: 100px 1fr;
+        gap: 7px 12px;
+      }
+      .facts dt {
+        color: var(--muted);
+      }
+      .facts dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+      .actions {
+        padding: 15px 24px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        justify-content: flex-end;
+        gap: 9px;
+      }
+      button {
+        min-height: 35px;
+        border: 1px solid var(--accent);
+        border-radius: 5px;
+        padding: 6px 13px;
+        background: var(--accent);
+        color: #fff;
+        font:
+          600 14px system-ui,
+          "Segoe UI",
+          sans-serif;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: var(--surface);
+        color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+      @media (max-width: 560px) {
+        body {
+          padding: 12px;
+        }
+        .head,
+        .body,
+        .actions {
+          padding-left: 17px;
+          padding-right: 17px;
+        }
+        .facts {
+          grid-template-columns: 1fr;
+          gap: 2px;
+        }
+        .facts dd {
+          margin-bottom: 8px;
+        }
+        .actions button {
+          flex: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="head">
+        <div class="mark">A</div>
+        <div>
+          <h1>aihub-auto 无法启动</h1>
+          <p>本地路由器没有通过启动检查</p>
+        </div>
+      </header>
+      <section class="body">
+        <div class="error" id="error">正在读取启动详情...</div>
+        <dl class="facts">
+          <dt>监听端口</dt>
+          <dd id="port">-</dd>
+          <dt>配置目录</dt>
+          <dd id="configDir">-</dd>
+          <dt>桌面版本</dt>
+          <dd id="version">-</dd>
+        </dl>
+      </section>
+      <footer class="actions">
+        <button class="secondary" id="github">GitHub</button
+        ><button id="restart">重试启动</button>
+      </footer>
+    </main>
+    <script>
+      const invoke =
+        window.__TAURI__ &&
+        window.__TAURI__.core &&
+        window.__TAURI__.core.invoke;
+      async function call(command, args) {
+        if (!invoke) throw new Error("桌面桥接不可用");
+        return invoke(command, args);
+      }
+      call("desktop_info")
+        .then((info) => {
+          document.querySelector("#error").textContent =
+            info.startupError || "未知启动错误";
+          document.querySelector("#port").textContent =
+            "127.0.0.1:" + info.port;
+          document.querySelector("#configDir").textContent = info.configDir;
+          document.querySelector("#version").textContent = "v" + info.version;
+        })
+        .catch((error) => {
+          document.querySelector("#error").textContent = String(error);
+        });
+      document.querySelector("#github").addEventListener("click", () =>
+        call("open_github").catch((error) => {
+          document.querySelector("#error").textContent = String(error);
+        }),
+      );
+      document
+        .querySelector("#restart")
+        .addEventListener("click", async (event) => {
+          event.currentTarget.disabled = true;
+          event.currentTarget.textContent = "正在重启...";
+          try {
+            await call("restart_desktop");
+          } catch (error) {
+            event.currentTarget.disabled = false;
+            event.currentTarget.textContent = "重试启动";
+            document.querySelector("#error").textContent = String(error);
+          }
+        });
+    </script>
+  </body>
+</html>
