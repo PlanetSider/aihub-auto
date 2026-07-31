@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { CircuitBreaker, LocalObservationStore } from "@aihub-auto/core";
 import { handleProxy } from "../src/proxy.ts";
+import { browserRequestProblem } from "../src/server.ts";
 import { createHarness, type Harness } from "./harness.ts";
 import { makeStat } from "./mock-upstream.ts";
 
@@ -779,6 +780,123 @@ describe("控制台 API", () => {
 		});
 		const ui = await fetch(`${base}/ui`);
 		expect(ui.status).toBe(200);
-		expect(await ui.text()).toContain("aihub-auto");
+		const html = await ui.text();
+		const csp = ui.headers.get("content-security-policy") ?? "";
+		const nonce = /script-src 'nonce-([^']+)'/.exec(csp)?.[1];
+		expect(nonce).toBeTruthy();
+		expect(csp).toContain("frame-ancestors 'none'");
+		expect(csp).toContain("'strict-dynamic'");
+		expect(csp).toContain("https://browser.sentry-cdn.com");
+		expect(csp).toContain("https://o4510289605296128.ingest.de.sentry.io");
+		expect(csp).not.toContain("'unsafe-inline'");
+		expect(html).toContain(`<style nonce="${nonce}">`);
+		expect(html).toContain(`<script nonce="${nonce}">`);
+		expect(html).toContain(`const CSP_NONCE="${nonce}"`);
+		expect(html).toContain("script.nonce=CSP_NONCE");
+		expect(ui.headers.get("cache-control")).toBe("no-store");
+		expect(ui.headers.get("x-content-type-options")).toBe("nosniff");
+		expect(ui.headers.get("referrer-policy")).toBe("no-referrer");
+		expect(html).toContain("aihub-auto");
+		expect(html).not.toContain("localStorage");
+		expect(html).not.toContain("sessionStorage");
+
+		const ctl = await fetch(`${base}/ctl/status`, {
+			headers: { "x-ui-password": "console-pass-123" },
+		});
+		expect(ctl.headers.get("cache-control")).toBe("no-store");
+	});
+});
+
+describe("浏览器请求边界", () => {
+	test("允许同源浏览器和无 Origin 客户端", async () => {
+		h = createHarness({ withServer: true });
+		const base = h.serverUrl!;
+		expect((await fetch(`${base}/healthz`)).status).toBe(200);
+		expect(
+			(
+				await fetch(`${base}/healthz`, {
+					headers: { Origin: base },
+				})
+			).status,
+		).toBe(200);
+	});
+
+	test("拒绝跨站 Origin、null Origin 和 Sec-Fetch-Site", async () => {
+		h = createHarness({ withServer: true });
+		const base = h.serverUrl!;
+		expect(
+			(
+				await fetch(`${base}/ctl/status`, {
+					headers: { Origin: "https://attacker.example" },
+				})
+			).status,
+		).toBe(403);
+		expect(
+			(
+				await fetch(`${base}/ctl/status`, {
+					headers: { Origin: "null" },
+				})
+			).status,
+		).toBe(403);
+		expect(
+			(
+				await fetch(`${base}/v1/models`, {
+					headers: { "Sec-Fetch-Site": "cross-site" },
+				})
+			).status,
+		).toBe(403);
+	});
+
+	test("loopback 监听拒绝 rebound Host 并接受本机 Host", () => {
+		h = createHarness();
+		expect(
+			browserRequestProblem(
+				new Request("http://attacker.example/ctl/status"),
+				h.config,
+			),
+		).toMatchObject({ status: 421 });
+		for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
+			expect(
+				browserRequestProblem(
+					new Request(`http://${host}:8787/ctl/status`),
+					h.config,
+				),
+			).toBeUndefined();
+		}
+	});
+
+	test("TLS 反向代理只接受显式 publicOrigin,不信任 forwarded proto", () => {
+		h = createHarness({
+			configPatch: {
+				listen: { host: "0.0.0.0", port: 8787 },
+				publicOrigin: "https://router.example",
+				proxyToken: "proxy-token-123456",
+				uiPassword: "console-pass-123",
+			},
+		});
+		const proxied = new Request("http://router.example/ctl/status", {
+			headers: { Origin: "https://router.example" },
+		});
+		expect(browserRequestProblem(proxied, h.config)).toBeUndefined();
+		expect(
+			browserRequestProblem(
+				new Request("http://router.example/ctl/status", {
+					headers: { Origin: "https://attacker.example" },
+				}),
+				h.config,
+			),
+		).toMatchObject({ status: 403 });
+		h.config.publicOrigin = "";
+		expect(
+			browserRequestProblem(
+				new Request("http://router.example/ctl/status", {
+					headers: {
+						Origin: "https://router.example",
+						"X-Forwarded-Proto": "https",
+					},
+				}),
+				h.config,
+			),
+		).toMatchObject({ status: 403 });
 	});
 });

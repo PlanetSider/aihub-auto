@@ -55,9 +55,21 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 
 配置目录:Windows `%LocalAppData%\aihub-auto`,Linux `~/.config/aihub-auto`,macOS `~/Library/Application Support/aihub-auto`。`config.json` 支持:
 
+监听端口也可只为本次启动覆盖，不修改 `config.json`：
+
+```bash
+AIHUB_AUTO_PORT=9000 ./aihub-auto
+./aihub-auto --port 9000
+```
+
+优先级为 `--port` > `AIHUB_AUTO_PORT` > `config.json` 的 `listen.port` >
+默认值 `8787`。端口必须是 1 到 65535 的十进制整数；非法值会在监听前使
+启动失败。运行 `./aihub-auto --help` 可查看启动参数。
+
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `baseUrl` | `https://aihub.top` | 站点地址(usage-stats 是 aihub 自有接口,不兼容其他站) |
+| `publicOrigin` | 空 | 可信反向代理的完整 HTTP(S) origin,例如 `https://router.example.com`;不信任转发头 |
 | `sentryDsn` | `xytime/aihub` 公共 DSN | Sentry 错误与反馈项目;可用 `SENTRY_DSN` 覆盖,显式留空时 SDK 与反馈入口均不加载 |
 | `upstreamUserAgent` | 空 | 模型代理请求的自定义 UA;空值沿用客户端 UA,可在控制台热更新 |
 | `listen.host` / `listen.port` | `127.0.0.1` / `8787` | 监听地址,可改 `0.0.0.0` |
@@ -83,9 +95,11 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 
 AIHub/OpenAI HTTP 错误、429/5xx、TTFB 超时、网络中断和客户端取消属于路由输入,由本地日志、熔断和故障转移处理,不会发送为 Sentry 错误。SDK 不启用 tracing、session、fetch、console 或请求上下文集成,并显式关闭 cookies、headers、body、query、GraphQL/GenAI/数据库参数、本地变量和源码上下文采集;只有路由器自身异常与用户主动提交的反馈会生成 envelope。DSN 是可公开的客户端配置,但控制台状态接口仍受 `uiPassword` 保护。
 
+Linux x64 发行包采用 Bun 的 `bun-linux-x64-baseline` 目标，支持不具备 AVX2 的较旧 x86-64 CPU。已验证 CentOS 7（glibc 2.17）和 Debian 9（glibc 2.24）；glibc 2.12 及更早版本不受支持。完整结果见根目录 `security_best_practices_report.md`；容器测试共享宿主机内核，不代表旧内核兼容性。
+
 ## 安全边界
 
 - 默认仅监听 127.0.0.1,凭据仅存本机(POSIX 下 0600),日志脱敏;`/ctl/status` 只返回 Key 元数据,不返回 `sk`
 - 配置目录内 `app.log` 默认记录运行日志(5 MiB × 当前+3 个历史),`crash.log` 记录生命周期和未处理异常(1 MiB × 当前+3 个历史)。直接双击 Windows EXE 使用 `%LocalAppData%\\aihub-auto`;通过 `AIHUB_AUTO_CONFIG_DIR` 可显式指定其他目录
 - 监听 `0.0.0.0` 时强制要求 `proxyToken` + `uiPassword`,否则拒绝启动(防止别人烧你的额度);客户端此时用 `OPENAI_API_KEY=<proxyToken>` 访问
-- 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用
+- 无 TLS:公网部署建议前置反代(Caddy/Nginx)或仅在可信内网使用;反向代理需保留原始 Host,并将 `publicOrigin` 设置为唯一对外 HTTPS origin

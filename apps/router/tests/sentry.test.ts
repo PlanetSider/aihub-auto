@@ -67,6 +67,19 @@ describe("Sentry 过滤边界", () => {
 		expect(() => CredentialsSchema.parse({ email: "not-an-email" })).toThrow();
 	});
 
+	test("publicOrigin 只接受无路径的完整 HTTP(S) origin", () => {
+		expect(
+			ConfigSchema.parse({ publicOrigin: "https://router.example" }).publicOrigin,
+		).toBe("https://router.example");
+		for (const publicOrigin of [
+			"https://router.example/path",
+			"https://router.example?query=1",
+			"file:///tmp/ui",
+		]) {
+			expect(() => ConfigSchema.parse({ publicOrigin })).toThrow();
+		}
+	});
+
 	test("SDK 只保留错误集成且显式关闭敏感数据收集", () => {
 		expect(
 			initRouterSentry({

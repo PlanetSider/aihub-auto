@@ -38,9 +38,28 @@ export const SentryDsnSchema = z.union([
 		),
 ]);
 
+function isHttpOrigin(value: string): boolean {
+	try {
+		const url = new URL(value);
+		return (
+			(url.protocol === "https:" || url.protocol === "http:") &&
+			value === url.origin
+		);
+	} catch {
+		return false;
+	}
+}
+
+export const PublicOriginSchema = z.union([
+	z.literal(""),
+	z.string().url().refine(isHttpOrigin, "必须是完整 HTTP(S) origin,不得包含路径"),
+]);
+
 export const ConfigSchema = z.object({
 	/** AIHub 站点(sub2api),usage-stats 为 aihub 自有接口 */
 	baseUrl: z.string().url().default("https://aihub.top"),
+	/** 可信反向代理对外 origin;空字符串表示不接受跨 origin 控制台请求。 */
+	publicOrigin: PublicOriginSchema.default(""),
 	/** Sentry 公共 DSN;留空时后端 SDK 与网页反馈均不加载。 */
 	sentryDsn: SentryDsnSchema.default(
 		"https://b8e9b3b5f1d86b44f01dae7fe83cfcce@o4510289605296128.ingest.de.sentry.io/4511828894548048",

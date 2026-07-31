@@ -6,7 +6,7 @@ import type { RouteExecutor } from "./executor.ts";
 import { handleProxy, type ProxyDeps } from "./proxy.ts";
 import type { Logger } from "./logger.ts";
 import { captureRouterException } from "./sentry.ts";
-import { UI_HTML } from "./ui.ts";
+import { renderUi } from "./ui.ts";
 
 export interface ServerDeps {
 	config: AppConfig;
@@ -29,8 +29,81 @@ export interface ServerDeps {
 function json(body: unknown, status = 200): Response {
 	return new Response(JSON.stringify(body), {
 		status,
-		headers: { "Content-Type": "application/json" },
+		headers: {
+			"Cache-Control": "no-store",
+			"Content-Type": "application/json",
+		},
 	});
+}
+
+function sentryOrigin(dsn: string): string | undefined {
+	if (!dsn) return undefined;
+	try {
+		return new URL(dsn).origin;
+	} catch {
+		return undefined;
+	}
+}
+
+function uiResponse(sentryDsn: string): Response {
+	const nonce = crypto.randomUUID().replaceAll("-", "");
+	const connectSources = ["'self'", sentryOrigin(sentryDsn)]
+		.filter(Boolean)
+		.join(" ");
+	const csp = [
+		"default-src 'none'",
+		`script-src 'nonce-${nonce}' 'strict-dynamic' https://browser.sentry-cdn.com`,
+		`style-src 'nonce-${nonce}'`,
+		`connect-src ${connectSources}`,
+		"img-src 'self' data: blob:",
+		"base-uri 'none'",
+		"form-action 'none'",
+		"frame-ancestors 'none'",
+		"object-src 'none'",
+	].join("; ");
+	return new Response(renderUi(nonce), {
+		headers: {
+			"Cache-Control": "no-store",
+			"Content-Security-Policy": csp,
+			"Content-Type": "text/html; charset=utf-8",
+			"Referrer-Policy": "no-referrer",
+			"X-Content-Type-Options": "nosniff",
+		},
+	});
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+function normalizedHostname(hostname: string): string {
+	return hostname.toLowerCase().replace(/^\[|\]$/g, "");
+}
+
+export function browserRequestProblem(
+	req: Request,
+	config: AppConfig,
+): { status: 403 | 421; error: string } | undefined {
+	let url: URL;
+	try {
+		url = new URL(req.url);
+	} catch {
+		return { status: 421, error: "请求 URL 无效" };
+	}
+	if (
+		LOOPBACK_HOSTS.has(normalizedHostname(config.listen.host)) &&
+		!LOOPBACK_HOSTS.has(normalizedHostname(url.hostname))
+	) {
+		return { status: 421, error: "请求主机与本机监听地址不匹配" };
+	}
+	const origin = req.headers.get("origin");
+	const acceptedOrigins = new Set([url.origin]);
+	if (config.publicOrigin) acceptedOrigins.add(config.publicOrigin);
+	if (origin !== null && !acceptedOrigins.has(origin)) {
+		return { status: 403, error: "拒绝跨站浏览器请求" };
+	}
+	if (req.headers.get("sec-fetch-site")?.toLowerCase() === "cross-site") {
+		return { status: 403, error: "拒绝跨站浏览器请求" };
+	}
+	return undefined;
 }
 
 const MANUAL_LOCK_OVERRIDE_REASONS = new Set<ExcludeReason>([
@@ -525,12 +598,14 @@ export function createServer(deps: ServerDeps): ReturnType<typeof Bun.serve> {
 			} catch {
 				return json({ error: "非法 URL" }, 400);
 			}
+			const browserProblem = browserRequestProblem(req, deps.config);
+			if (browserProblem) {
+				return json({ error: browserProblem.error }, browserProblem.status);
+			}
 			const path = url.pathname;
 
 			if (path === "/" || path === "/ui" || path === "/ui/") {
-				return new Response(UI_HTML, {
-					headers: { "Content-Type": "text/html; charset=utf-8" },
-				});
+				return uiResponse(deps.sentryDsn);
 			}
 			if (path.startsWith("/ctl/")) {
 				return handleControl(req, url, deps);
