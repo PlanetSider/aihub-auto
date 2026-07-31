@@ -41,6 +41,7 @@ jobs:
         with:
           files: artifacts/*.zip
           draft: true
+          body_path: docs/release-downloads.md
           generate_release_notes: true
 
   desktop:
@@ -89,6 +90,15 @@ jobs:
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+      - name: Upload portable Windows desktop ZIP
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $archive = "apps/desktop/src-tauri/target/release/aihub-auto-desktop-windows-x64.zip"
+          Compress-Archive -LiteralPath "apps/desktop/src-tauri/target/release/aihub-auto-desktop.exe" -DestinationPath $archive
+          gh release upload "$env:GITHUB_REF_NAME" $archive --clobber
 
   publish:
     needs: desktop

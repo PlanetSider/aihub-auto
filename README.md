@@ -8,7 +8,7 @@
 
 ## 五分钟开始
 
-1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载桌面安装包：Windows 使用 NSIS 安装器，macOS 使用 DMG，Debian/Ubuntu x64 使用 `.deb`。其他 Linux 发行版或无界面部署使用对应平台的 standalone ZIP。
+1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载匹配的包：大多数 Windows x64 用户用 NSIS 安装器；免安装桌面版用 `aihub-auto-desktop-windows-x64.zip`；macOS 用对应架构的 DMG；Debian/Ubuntu x64 用 `.deb`。`aihub-auto-<platform>-<arch>.zip` 是不带窗口的 standalone 路由器，适合无界面部署和其他 Linux 发行版。
 2. 启动 `aihub-auto` 桌面应用。它会启动内置路由器并在健康检查通过后打开窗口；关闭窗口后仍在系统托盘运行。standalone 版本则直接运行压缩包中的 `aihub-auto`/`aihub-auto.exe`。
 3. 按首次使用向导登录 AIHub 账号或粘贴 Access Token。standalone 版本也可打开 <http://127.0.0.1:8787/ui>。
 4. 将你的 OpenAI 兼容客户端指向本地代理：
@@ -46,7 +46,7 @@ AIHUB_AUTO_PORT=9000 ./aihub-auto
 
 关闭主窗口只会隐藏到托盘。托盘菜单提供显示窗口、运行日志、检查更新和明确退出；退出时同时停止 sidecar。日志页通过已鉴权的 `/ctl/logs` 读取 `app.log` 最近 500 行，服务端限制为最多 1000 行/512 KiB 并再次脱敏，支持级别/文本筛选与暂停自动刷新。
 
-Windows 和 macOS 桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。Debian/Ubuntu `.deb` 由系统包管理器更新；发布仍同时附带 standalone ZIP，桌面环境或更新器不可用时可直接回退。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
+Windows 和 macOS 桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。Debian/Ubuntu `.deb` 由系统包管理器更新；发布同时附带免安装的 Windows 桌面 ZIP 和不带窗口的 standalone ZIP，桌面环境或更新器不可用时可直接回退。`*.sig` 与 `latest.json` 只供更新器使用，不需要手动打开。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
 
 ## 日常使用
 

@@ -670,6 +670,10 @@ describe("控制台 API", () => {
 			'const GUIDE_DISMISSED_KEY="aihub-auto.guide-dismissed"',
 		);
 		expect(ui).toContain('$("#refresh").focus()');
+		expect(ui).toContain('id="guideVerify"');
+		expect(ui).toContain("async function verifyGuide()");
+		expect(ui).toContain('localBaseUrl()+"/models"');
+		expect(ui).toContain("需要 proxyToken");
 		expect(ui).toContain(
 			'$("#guideLogin").addEventListener("click",()=>{$("#email").focus()',
 		);
