@@ -1,6 +1,6 @@
 # TODO
 
-## Desktop v0.4.0 execution
+## Desktop v0.4.1 release
 
 - [x] Review PR #1 for security/regressions, fix the identified CSP/credential/proxy-trust issues, and merge it as `5f66f64`.
 - [x] Activate the real `xytime` Sentry DSN, keep upstream failures excluded, and verify one intentional router error plus one official Feedback event.

@@ -17,7 +17,7 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 
 之后一切照旧——代理在幕后持续选择最优分组。
 
-桌面用户可直接安装 Release 中的 Tauri 版本：桌面窗口内置本路由器作为 sidecar，启动健康检查通过后打开同一套控制台，关闭窗口后转入托盘。托盘可重新显示窗口、打开实时日志、检查签名更新或明确退出。NSIS/DMG/AppImage 与 standalone ZIP 同时发布；无界面环境继续使用本页的 standalone 方式。
+桌面用户可直接安装 Release 中的 Tauri 版本：桌面窗口内置本路由器作为 sidecar，启动健康检查通过后打开同一套控制台，关闭窗口后转入托盘。托盘可重新显示窗口、打开实时日志、检查签名更新或明确退出。Windows NSIS、macOS DMG、Debian/Ubuntu `.deb` 与 standalone ZIP 同时发布；无界面环境和其他 Linux 发行版继续使用本页的 standalone 方式。
 
 ## 策略
 

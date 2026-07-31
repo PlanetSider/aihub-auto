@@ -55,7 +55,7 @@ jobs:
             args: --bundles nsis
           - platform: ubuntu-22.04
             target: ""
-            args: --bundles appimage
+            args: --bundles deb
           - platform: macos-latest
             target: aarch64-apple-darwin
             args: --target aarch64-apple-darwin --bundles dmg

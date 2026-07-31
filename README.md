@@ -1,6 +1,6 @@
 # aihub-auto
 
-让 OpenAI 兼容客户端通过本地地址使用 [AIHub](https://aihub.top)，并自动选择合适分组的跨平台反向代理。Windows、macOS 和 Linux 提供带托盘与 minisign 验证更新的 Tauri 桌面应用，也保留无需安装的 standalone 路由器。
+让 OpenAI 兼容客户端通过本地地址使用 [AIHub](https://aihub.top)，并自动选择合适分组的跨平台反向代理。Windows 和 macOS 提供带托盘与 minisign 验证更新的 Tauri 桌面应用；Debian/Ubuntu 提供原生桌面包，所有平台也保留无需安装的 standalone 路由器。
 
 它适合已经有 AIHub 账号、希望减少手动切组，同时保留连续对话缓存的人。启动后，客户端只需要访问本机 `http://127.0.0.1:8787/v1`；登录、Key 创建、分组选择、故障转移和运行日志由 aihub-auto 在本机处理。
 
@@ -8,7 +8,7 @@
 
 ## 五分钟开始
 
-1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载桌面安装包：Windows 使用 NSIS 安装器，macOS 使用 DMG，Linux x64 使用 AppImage。需要无界面部署时改下对应平台的 standalone ZIP。
+1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载桌面安装包：Windows 使用 NSIS 安装器，macOS 使用 DMG，Debian/Ubuntu x64 使用 `.deb`。其他 Linux 发行版或无界面部署使用对应平台的 standalone ZIP。
 2. 启动 `aihub-auto` 桌面应用。它会启动内置路由器并在健康检查通过后打开窗口；关闭窗口后仍在系统托盘运行。standalone 版本则直接运行压缩包中的 `aihub-auto`/`aihub-auto.exe`。
 3. 按首次使用向导登录 AIHub 账号或粘贴 Access Token。standalone 版本也可打开 <http://127.0.0.1:8787/ui>。
 4. 将你的 OpenAI 兼容客户端指向本地代理：
@@ -46,7 +46,7 @@ AIHUB_AUTO_PORT=9000 ./aihub-auto
 
 关闭主窗口只会隐藏到托盘。托盘菜单提供显示窗口、运行日志、检查更新和明确退出；退出时同时停止 sidecar。日志页通过已鉴权的 `/ctl/logs` 读取 `app.log` 最近 500 行，服务端限制为最多 1000 行/512 KiB 并再次脱敏，支持级别/文本筛选与暂停自动刷新。
 
-桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。发布仍同时附带 standalone ZIP，桌面环境或更新器不可用时可直接回退。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
+Windows 和 macOS 桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。Debian/Ubuntu `.deb` 由系统包管理器更新；发布仍同时附带 standalone ZIP，桌面环境或更新器不可用时可直接回退。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
 
 ## 日常使用
 
