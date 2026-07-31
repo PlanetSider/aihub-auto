@@ -9,5 +9,5 @@
 - [x] Add a bounded authenticated live-log view backed by the existing redacted rolling `app.log`.
 - [x] Redesign the operations UI for desktop and browser use, including a clear first-run setup guide, copyable base URL/API Key examples, GitHub link, and responsive states.
 - [x] Add signed Tauri updater support with GitHub Releases metadata, user confirmation, install progress, restart, and failure recovery.
-- [ ] Package and smoke-test the desktop app on supported platforms while preserving the standalone router artifacts and browser console fallback.
-- [ ] Update usage/security/release documentation, complete independent review, and publish only after Sentry and updater end-to-end verification.
+- [x] Package and smoke-test the desktop app on supported platforms while preserving the standalone router artifacts and browser console fallback; v0.4.1 CI produced Windows NSIS, macOS DMG, Debian/Ubuntu `.deb`, and standalone ZIP artifacts.
+- [x] Update usage/security/release documentation, complete independent review, and publish after Sentry and updater end-to-end verification; v0.4.1 is public on GitHub Releases.
