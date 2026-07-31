@@ -171,6 +171,8 @@ export function createHarness(opts?: {
 			persistConfig,
 			persistState,
 			persistCredentials,
+			sentryDsn: config.sentryDsn,
+			syncSentryUser: () => {},
 		};
 		config.listen.port = 0;
 		server = createServer(serverDeps);

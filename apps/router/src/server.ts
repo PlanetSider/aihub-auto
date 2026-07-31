@@ -5,6 +5,7 @@ import type { RouteDaemon } from "./daemon.ts";
 import type { RouteExecutor } from "./executor.ts";
 import { handleProxy, type ProxyDeps } from "./proxy.ts";
 import type { Logger } from "./logger.ts";
+import { captureRouterException } from "./sentry.ts";
 import { UI_HTML } from "./ui.ts";
 
 export interface ServerDeps {
@@ -20,6 +21,9 @@ export interface ServerDeps {
 	persistConfig: () => Promise<void>;
 	persistState: () => Promise<void>;
 	persistCredentials: () => Promise<void>;
+	/** 实际使用的公共 DSN(可能来自 SENTRY_DSN 环境变量)。 */
+	sentryDsn: string;
+	syncSentryUser: (email?: string) => void;
 }
 
 function json(body: unknown, status = 200): Response {
@@ -294,6 +298,12 @@ export async function handleControl(
 			},
 			affinity,
 			modelBlocks: deps.daemon.modelBlockStats(),
+			sentry: {
+				dsn: deps.sentryDsn,
+				userEmail: deps.credentials.accessToken
+					? (deps.credentials.email ?? null)
+					: null,
+			},
 			hasToken: Boolean(deps.credentials.accessToken),
 			needsReauth: deps.daemon.needsReauth,
 			traffic,
@@ -439,9 +449,12 @@ export async function handleControl(
 		} catch {
 			return json({ error: "非法 JSON" }, 400);
 		}
+		const previousCredentials = { ...deps.credentials };
 		try {
 			if (body.token) {
 				deps.credentials.accessToken = body.token.trim();
+				deps.credentials.refreshToken = undefined;
+				deps.credentials.expiresAt = undefined;
 			} else if (body.email && body.password) {
 				const session = await deps.client.login(body.email, body.password);
 				deps.credentials.accessToken = session.accessToken;
@@ -450,12 +463,26 @@ export async function handleControl(
 			} else {
 				return json({ error: "需要 email+password 或 token" }, 400);
 			}
+			// 登录后立刻验证身份;只有验证成功才覆盖持久化凭据和 Sentry user。
+			const me = await deps.client.me();
+			const value = typeof me["email"] === "string" ? me["email"].trim() : "";
+			const fallback = body.email?.trim() ?? "";
+			const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+				? value
+				: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fallback)
+					? fallback
+					: undefined;
+			deps.credentials.email = email;
 			await deps.persistCredentials();
+			deps.syncSentryUser(email);
 			deps.daemon.needsReauth = false;
-			// 登录后立刻验证 + 触发一轮路由
-			await deps.client.me();
 			return json({ ok: true });
 		} catch (err) {
+			for (const key of Object.keys(deps.credentials)) {
+				delete deps.credentials[key as keyof Credentials];
+			}
+			Object.assign(deps.credentials, previousCredentials);
+			deps.syncSentryUser(previousCredentials.email);
 			return json(
 				{ error: err instanceof Error ? err.message : "登录失败" },
 				400,
@@ -527,6 +554,7 @@ export function createServer(deps: ServerDeps): ReturnType<typeof Bun.serve> {
 			return handleProxy(req, deps.proxyDeps);
 		},
 		error: (err) => {
+			captureRouterException(err, "bun_server");
 			deps.logger.error(`服务器错误:${err.message}`);
 			return json({ error: "内部错误" }, 500);
 		},

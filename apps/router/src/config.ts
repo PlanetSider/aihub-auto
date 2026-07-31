@@ -8,9 +8,43 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 
+function isPublicSentryDsn(value: string): boolean {
+	try {
+		const url = new URL(value);
+		const path = url.pathname.split("/").filter(Boolean);
+		return (
+			(url.protocol === "https:" || url.protocol === "http:") &&
+			/^[A-Za-z0-9]+$/.test(url.username) &&
+			!url.password &&
+			Boolean(url.hostname) &&
+			/^\d+$/.test(path.at(-1) ?? "") &&
+			!url.pathname.endsWith("/") &&
+			!url.search &&
+			!url.hash
+		);
+	} catch {
+		return false;
+	}
+}
+
+export const SentryDsnSchema = z.union([
+	z.literal(""),
+	z
+		.string()
+		.url()
+		.refine(
+			isPublicSentryDsn,
+			"需要公共 Sentry DSN(含 public key 和 project id,不得含 secret)",
+		),
+]);
+
 export const ConfigSchema = z.object({
 	/** AIHub 站点(sub2api),usage-stats 为 aihub 自有接口 */
 	baseUrl: z.string().url().default("https://aihub.top"),
+	/** Sentry 公共 DSN;留空时后端 SDK 与网页反馈均不加载。 */
+	sentryDsn: SentryDsnSchema.default(
+		"https://b8e9b3b5f1d86b44f01dae7fe83cfcce@o4510289605296128.ingest.de.sentry.io/4511828894548048",
+	),
 	/** 模型代理请求的 User-Agent;空字符串表示沿用客户端值。 */
 	upstreamUserAgent: z
 		.string()
@@ -164,6 +198,8 @@ export type AppState = z.infer<typeof StateSchema>;
 
 export const CredentialsSchema = z.object({
 	accessToken: z.string().optional(),
+	/** 已验证 AIHub 身份邮箱,仅用于 Sentry user/Feedback 默认邮箱。 */
+	email: z.string().email().optional(),
 	refreshToken: z.string().optional(),
 	expiresAt: z.number().optional(),
 	/** 模式 A 使用的 sk(反代注入用);从 keys 列表或用户粘贴获得 */

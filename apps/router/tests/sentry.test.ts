@@ -1,0 +1,101 @@
+import { describe, expect, test } from "bun:test";
+import { AIHubApiError } from "@aihub-auto/core";
+import * as Sentry from "@sentry/bun";
+import { CredentialsSchema, ConfigSchema } from "../src/config.ts";
+import { initRouterSentry, isExpectedUpstreamError } from "../src/sentry.ts";
+
+describe("Sentry 过滤边界", () => {
+	test("AIHub/OpenAI 响应、超时和连接失败不作为应用错误上报", () => {
+		expect(
+			isExpectedUpstreamError(new AIHubApiError("unauthorized", 401)),
+		).toBe(true);
+		expect(
+			isExpectedUpstreamError(
+				new Error("OpenAI API error (401): 401 status code (no body)"),
+			),
+		).toBe(true);
+		expect(isExpectedUpstreamError(new Error("TTFB timeout"))).toBe(true);
+		expect(isExpectedUpstreamError(new Error("read ECONNRESET"))).toBe(true);
+		expect(
+			isExpectedUpstreamError(new DOMException("client aborted", "AbortError")),
+		).toBe(true);
+	});
+
+	test("路由器自身异常仍可进入 Sentry", () => {
+		expect(
+			isExpectedUpstreamError(
+				new TypeError("Cannot read properties of undefined (reading state)"),
+			),
+		).toBe(false);
+	});
+
+	test("DSN 默认启用且已验证邮箱可以持久化", () => {
+		expect(ConfigSchema.parse({}).sentryDsn).toBe(
+			"https://b8e9b3b5f1d86b44f01dae7fe83cfcce@o4510289605296128.ingest.de.sentry.io/4511828894548048",
+		);
+		expect(
+			ConfigSchema.parse({
+				sentryDsn: "https://public@example.ingest.sentry.io/1",
+			}).sentryDsn,
+		).toBe("https://public@example.ingest.sentry.io/1");
+		expect(() =>
+			ConfigSchema.parse({ sentryDsn: "https://example.com/not-a-dsn" }),
+		).toThrow();
+		expect(() =>
+			ConfigSchema.parse({
+				sentryDsn: "https://public:secret@example.ingest.sentry.io/1",
+			}),
+		).toThrow();
+		expect(() =>
+			ConfigSchema.parse({
+				sentryDsn: "https://public@user:pass@example.ingest.sentry.io/1",
+			}),
+		).toThrow();
+		expect(() =>
+			ConfigSchema.parse({
+				sentryDsn: "https://public@example.ingest.sentry.io/project-name",
+			}),
+		).toThrow();
+		expect(() =>
+			ConfigSchema.parse({
+				sentryDsn: "https://public@example.ingest.sentry.io/1/",
+			}),
+		).toThrow();
+		expect(CredentialsSchema.parse({ email: "user@example.com" }).email).toBe(
+			"user@example.com",
+		);
+		expect(() => CredentialsSchema.parse({ email: "not-an-email" })).toThrow();
+	});
+
+	test("SDK 只保留错误集成且显式关闭敏感数据收集", () => {
+		expect(
+			initRouterSentry({
+				dsn: "http://public@127.0.0.1:9999/1",
+				upstreamBaseUrl: "https://aihub.top",
+			}),
+		).toBe(true);
+		const client = Sentry.getClient();
+		expect(client?.getOptions().tracesSampleRate).toBeUndefined();
+		const names =
+			client?.getOptions().integrations?.map(({ name }) => name) ?? [];
+		expect(names).toEqual([
+			"InboundFilters",
+			"FunctionToString",
+			"LinkedErrors",
+			"Context",
+			"Modules",
+		]);
+		expect(client?.getDataCollectionOptions()).toMatchObject({
+			userInfo: false,
+			cookies: false,
+			httpHeaders: { request: false, response: false },
+			httpBodies: [],
+			urlQueryParams: false,
+			graphQL: { document: false, variables: false },
+			genAI: { inputs: false, outputs: false },
+			databaseQueryData: false,
+			stackFrameVariables: false,
+			frameContextLines: 0,
+		});
+	});
+});

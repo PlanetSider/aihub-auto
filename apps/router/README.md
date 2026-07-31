@@ -58,6 +58,7 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `baseUrl` | `https://aihub.top` | 站点地址(usage-stats 是 aihub 自有接口,不兼容其他站) |
+| `sentryDsn` | `xytime/aihub` 公共 DSN | Sentry 错误与反馈项目;可用 `SENTRY_DSN` 覆盖,显式留空时 SDK 与反馈入口均不加载 |
 | `upstreamUserAgent` | 空 | 模型代理请求的自定义 UA;空值沿用客户端 UA,可在控制台热更新 |
 | `listen.host` / `listen.port` | `127.0.0.1` / `8787` | 监听地址,可改 `0.0.0.0` |
 | `mode` | `balanced` | economy / balanced / speed |
@@ -75,6 +76,12 @@ export OPENAI_API_KEY="anything"          # 本地代理自动注入真实 Key,�
 | `decision.*` | 见 ALGORITHM.md | 粘性/缓存惩罚/空闲阈值/最短驻留 |
 | `auditLog` | false | JSONL 决策审计(含每轮全部候选得分) |
 | `logLevel` | `info` | `app.log` 最低日志级别:debug / info / warn / error |
+
+## Sentry 与用户反馈
+
+默认连接 `xytime/aihub` Sentry 项目,也可通过 `sentryDsn` 或环境变量 `SENTRY_DSN` 覆盖。后端使用 `@sentry/bun` 捕获路由器自身未处理异常,控制台右上角显示 Sentry 官方“用户反馈”表单。已登录且 `/auth/me` 返回有效邮箱时,该邮箱写入 Sentry user 并预填反馈;未登录或没有邮箱时保持 Sentry 默认匿名行为。
+
+AIHub/OpenAI HTTP 错误、429/5xx、TTFB 超时、网络中断和客户端取消属于路由输入,由本地日志、熔断和故障转移处理,不会发送为 Sentry 错误。SDK 不启用 tracing、session、fetch、console 或请求上下文集成,并显式关闭 cookies、headers、body、query、GraphQL/GenAI/数据库参数、本地变量和源码上下文采集;只有路由器自身异常与用户主动提交的反馈会生成 envelope。DSN 是可公开的客户端配置,但控制台状态接口仍受 `uiPassword` 保护。
 
 ## 安全边界
 

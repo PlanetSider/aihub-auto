@@ -529,7 +529,11 @@ describe("控制台 API", () => {
 	test("status/config/route-once/login 全链路", async () => {
 		h = createHarness({
 			withServer: true,
-			configPatch: { keyMode: "pool", mode: "economy" },
+			configPatch: {
+				keyMode: "pool",
+				mode: "economy",
+				sentryDsn: "https://public@example.ingest.sentry.io/1",
+			},
 		});
 		h.mock.stats = [
 			makeStat({
@@ -590,6 +594,7 @@ describe("控制台 API", () => {
 			pool: Record<string, { keyId: number; lastUsedAt: number }>;
 			affinity: { sessions: number; responseAliases: number };
 			manualLock: { groupId: number | null; revision: number };
+			sentry: { dsn: string; userEmail: string | null };
 			groups: Array<{
 				groupId: number;
 				keyId: number | null;
@@ -604,6 +609,10 @@ describe("控制台 API", () => {
 		expect(status.affinity.sessions).toBe(2);
 		expect(status.affinity.responseAliases).toBe(2);
 		expect(status.manualLock.groupId).toBeNull();
+		expect(status.sentry).toEqual({
+			dsn: "https://public@example.ingest.sentry.io/1",
+			userEmail: null,
+		});
 		expect(status.groups.find((group) => group.groupId === 1)).toMatchObject({
 			keyId: status.pool["1"]?.keyId,
 			sessions: 1,
@@ -618,6 +627,16 @@ describe("控制台 API", () => {
 		expect(ui).toContain("[hidden]{display:none!important}");
 		expect(ui).toContain("个本地运行分组");
 		expect(ui).not.toContain("未入池");
+		expect(ui).toContain("bundle.feedback.min.js");
+		expect(ui).toContain(
+			'feedbackIntegration({autoInject:false,colorScheme:"system"})',
+		);
+		expect(ui).toContain("defaultIntegrations:false");
+		expect(ui).toContain("cookies:false");
+		expect(ui).toContain("httpHeaders:{request:false,response:false}");
+		expect(ui).toContain("beforeSendFeedback(event)");
+		expect(ui).toContain("location.origin+location.pathname");
+		expect(ui).toContain("Sentry.getFeedback()?.attachTo(button)");
 		const eligible = status.candidates.find((c) => c.groupId === 1);
 		expect(eligible).toMatchObject({
 			cloudProbeTtft: 1000,
@@ -708,6 +727,24 @@ describe("控制台 API", () => {
 		});
 		expect(loginRes.status).toBe(200);
 		expect(h.credentials.accessToken).toBe("mock-at");
+		expect(h.credentials.email).toBe("mock@test.local");
+		const loggedInStatus = (await fetch(`${base}/ctl/status`).then((response) =>
+			response.json(),
+		)) as { sentry: { userEmail: string | null } };
+		expect(loggedInStatus.sentry.userEmail).toBe("mock@test.local");
+
+		// 直接 token 登录属于新身份边界,不得沿用上一个账号的 refresh token。
+		h.credentials.refreshToken = "stale-account-refresh";
+		const tokenLoginRes = await fetch(`${base}/ctl/login`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ token: "manual-token" }),
+		});
+		expect(tokenLoginRes.status).toBe(200);
+		expect(h.credentials.accessToken).toBe("manual-token");
+		expect(h.credentials.refreshToken).toBeUndefined();
+		expect(h.credentials.expiresAt).toBeUndefined();
+		expect(h.credentials.email).toBe("mock@test.local");
 	});
 
 	test("uiPassword 配置后:无口令 401,带口令通过;/healthz 与 /ui 开放", async () => {
@@ -724,6 +761,14 @@ describe("控制台 API", () => {
 				})
 			).status,
 		).toBe(200);
+		h.credentials.accessToken = undefined;
+		h.credentials.email = "stale@example.com";
+		const anonymousStatus = (await fetch(`${base}/ctl/status`, {
+			headers: { "x-ui-password": "console-pass-123" },
+		}).then((response) => response.json())) as {
+			sentry: { userEmail: string | null };
+		};
+		expect(anonymousStatus.sentry.userEmail).toBeNull();
 		expect((await fetch(`${base}/healthz`)).status).toBe(200);
 		const apiRoot = await fetch(`${base}/v1`);
 		expect(apiRoot.status).toBe(200);

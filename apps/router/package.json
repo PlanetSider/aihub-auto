@@ -1,11 +1,12 @@
 {
   "name": "@aihub-auto/router",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "AIHub session-affine auto-routing reverse proxy with an operations console",
   "dependencies": {
     "@aihub-auto/core": "workspace:*",
+    "@sentry/bun": "10.69.0",
     "zod": "^4.4.3"
   }
 }

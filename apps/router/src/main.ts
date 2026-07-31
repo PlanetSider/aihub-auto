@@ -1,4 +1,5 @@
 import {
+	AIHubApiError,
 	AIHubClient,
 	CircuitBreaker,
 	LocalObservationStore,
@@ -10,6 +11,7 @@ import {
 	loadConfig,
 	loadCredentials,
 	loadState,
+	SentryDsnSchema,
 	validateListenSecurity,
 } from "./config.ts";
 import { RouteDaemon } from "./daemon.ts";
@@ -19,6 +21,12 @@ import type { ProxyDeps } from "./proxy.ts";
 import { createServer } from "./server.ts";
 import { SessionAffinity } from "./session.ts";
 import { SingleKeyGate, TrafficTracker } from "./traffic.ts";
+import {
+	captureRouterException,
+	flushRouterSentry,
+	initRouterSentry,
+	syncSentryUser,
+} from "./sentry.ts";
 
 async function main(): Promise<void> {
 	const dir = configDir();
@@ -26,6 +34,13 @@ async function main(): Promise<void> {
 	const config = await loadConfig(store);
 	const state = await loadState(store);
 	const credentials = await loadCredentials(store);
+	const sentryDsn = SentryDsnSchema.parse(
+		(process.env["SENTRY_DSN"] ?? config.sentryDsn).trim(),
+	);
+	initRouterSentry({
+		dsn: sentryDsn,
+		upstreamBaseUrl: config.baseUrl,
+	});
 
 	const appLogPath = join(dir, "app.log");
 	const crashLogPath = join(dir, "crash.log");
@@ -62,10 +77,12 @@ async function main(): Promise<void> {
 			return;
 		}
 		crashLog.record("unhandled_rejection", detail);
+		captureRouterException(reason, "unhandled_rejection");
 		logger.error(`未处理 Promise:${detail}`);
 	});
 	process.on("uncaughtException", (err) => {
 		crashLog.record("uncaught_exception", err.stack ?? err.message);
+		captureRouterException(err, "uncaught_exception");
 		logger.error(`未捕获异常:${err.stack ?? err.message}`);
 	});
 	process.on("beforeExit", (code) =>
@@ -111,6 +128,38 @@ async function main(): Promise<void> {
 	const persistConfig = async () => store.write("config.json", config);
 	const persistCredentials = async () =>
 		store.write("credentials.json", credentials);
+	const clearSentryIdentity = async () => {
+		if (credentials.email !== undefined) {
+			credentials.email = undefined;
+			await persistCredentials();
+		}
+		syncSentryUser(undefined);
+	};
+	const refreshSentryIdentity = async () => {
+		if (!credentials.accessToken) {
+			await clearSentryIdentity();
+			return;
+		}
+		try {
+			const me = await client.me();
+			const value = typeof me["email"] === "string" ? me["email"].trim() : "";
+			const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+				? value
+				: undefined;
+			if (credentials.email !== email) {
+				credentials.email = email;
+				await persistCredentials();
+			}
+			syncSentryUser(email);
+		} catch (error) {
+			if (error instanceof AIHubApiError && error.status === 401) {
+				await clearSentryIdentity();
+				return;
+			}
+			syncSentryUser(credentials.email);
+		}
+	};
+	await refreshSentryIdentity();
 
 	const executor = new RouteExecutor({
 		client,
@@ -137,6 +186,7 @@ async function main(): Promise<void> {
 		reauth: async () => {
 			if (!credentials.refreshToken) {
 				daemon.needsReauth = true;
+				await clearSentryIdentity();
 				return false;
 			}
 			try {
@@ -145,9 +195,11 @@ async function main(): Promise<void> {
 				credentials.refreshToken = session.refreshToken;
 				credentials.expiresAt = session.expiresAt;
 				await persistCredentials();
+				await refreshSentryIdentity();
 				logger.info("token 已自动续期");
 				return true;
 			} catch {
+				await clearSentryIdentity();
 				daemon.needsReauth = true;
 				logger.error("token 续期失败,请重新登录(控制台)");
 				return false;
@@ -209,6 +261,8 @@ async function main(): Promise<void> {
 			persistConfig,
 			persistState,
 			persistCredentials,
+			sentryDsn,
+			syncSentryUser,
 		});
 	} catch (err) {
 		logger.error(
@@ -266,14 +320,17 @@ async function main(): Promise<void> {
 		state.breaker = breaker.toJSON();
 		state.observations = observations.toJSON();
 		await persistState().catch(() => {});
+		await flushRouterSentry();
 		process.exit(0);
 	};
 	process.on("SIGINT", () => void shutdown("SIGINT"));
 	process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
 	new CrashLog(join(configDir(), "crash.log")).record("startup_error", err);
+	captureRouterException(err, "startup_error");
 	console.error(`启动失败:${err instanceof Error ? err.message : String(err)}`);
+	await flushRouterSentry();
 	process.exit(1);
 });
