@@ -96,8 +96,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $archive = "apps/desktop/src-tauri/target/release/aihub-auto-desktop-windows-x64.zip"
-          Compress-Archive -LiteralPath "apps/desktop/src-tauri/target/release/aihub-auto-desktop.exe" -DestinationPath $archive
+          $root = "apps/desktop/src-tauri/target/release"
+          $portable = "$root/portable"
+          $archive = "$root/aihub-auto-desktop-windows-x64.zip"
+          $desktop = "$root/aihub-auto-desktop.exe"
+          $sidecar = "apps/desktop/src-tauri/binaries/aihub-auto-router-x86_64-pc-windows-msvc.exe"
+          if (!(Test-Path $desktop) -or !(Test-Path $sidecar)) { throw "portable desktop files are missing" }
+          Remove-Item -Recurse -Force $portable -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $portable | Out-Null
+          Copy-Item $desktop "$portable/aihub-auto-desktop.exe"
+          Copy-Item $sidecar "$portable/aihub-auto-router.exe"
+          Compress-Archive -Path "$portable/*" -DestinationPath $archive -Force
           gh release upload "$env:GITHUB_REF_NAME" $archive --clobber
 
   publish:
@@ -110,4 +119,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           release_id="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)"
+          notes="$(mktemp)"
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json body --jq .body | sed -e "s|__VERSION__|${GITHUB_REF_NAME#v}|g" -e "s|__DOWNLOAD_BASE__|https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME|g" > "$notes"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" -F draft=false -F make_latest=true

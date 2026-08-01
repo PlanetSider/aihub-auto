@@ -50,6 +50,14 @@ function isHttpOrigin(value: string): boolean {
 	}
 }
 
+function isHttpsUrl(value: string): boolean {
+	try {
+		return new URL(value).protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
 export const PublicOriginSchema = z.union([
 	z.literal(""),
 	z
@@ -57,6 +65,11 @@ export const PublicOriginSchema = z.union([
 		.url()
 		.refine(isHttpOrigin, "必须是完整 HTTP(S) origin,不得包含路径"),
 ]);
+
+export const UpdateMirrorSchema = z
+	.string()
+	.url()
+	.refine(isHttpsUrl, "更新镜像必须是 HTTPS URL");
 
 export const ConfigSchema = z.object({
 	/** AIHub 站点(sub2api),usage-stats 为 aihub 自有接口 */
@@ -67,6 +80,8 @@ export const ConfigSchema = z.object({
 	sentryDsn: SentryDsnSchema.default(
 		"https://b8e9b3b5f1d86b44f01dae7fe83cfcce@o4510289605296128.ingest.de.sentry.io/4511828894548048",
 	),
+	/** 桌面更新: GitHub 失败后依次尝试的 HTTPS latest.json 镜像。 */
+	updateMirrors: z.array(UpdateMirrorSchema).max(3).default([]),
 	/** 模型代理请求的 User-Agent;空字符串表示沿用客户端值。 */
 	upstreamUserAgent: z
 		.string()

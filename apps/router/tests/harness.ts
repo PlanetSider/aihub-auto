@@ -173,6 +173,7 @@ export function createHarness(opts?: {
 			persistState,
 			persistCredentials,
 			sentryDsn: config.sentryDsn,
+			desktopMode: false,
 			syncSentryUser: () => {},
 		};
 		config.listen.port = 0;

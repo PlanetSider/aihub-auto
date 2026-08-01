@@ -276,6 +276,7 @@ async function main(): Promise<void> {
 			persistState,
 			persistCredentials,
 			sentryDsn,
+			desktopMode: process.env["AIHUB_AUTO_DESKTOP"] === "1",
 			syncSentryUser,
 		});
 	} catch (err) {

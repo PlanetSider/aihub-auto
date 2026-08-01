@@ -67,6 +67,19 @@ describe("Sentry 过滤边界", () => {
 		expect(() => CredentialsSchema.parse({ email: "not-an-email" })).toThrow();
 	});
 
+	test("更新镜像只接受 HTTPS endpoint", () => {
+		expect(
+			ConfigSchema.parse({
+				updateMirrors: ["https://mirror.example/latest.json"],
+			}).updateMirrors,
+		).toEqual(["https://mirror.example/latest.json"]);
+		expect(() =>
+			ConfigSchema.parse({
+				updateMirrors: ["http://mirror.example/latest.json"],
+			}),
+		).toThrow();
+	});
+
 	test("publicOrigin 只接受无路径的完整 HTTP(S) origin", () => {
 		expect(
 			ConfigSchema.parse({ publicOrigin: "https://router.example" })

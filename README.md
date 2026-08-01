@@ -8,7 +8,7 @@
 
 ## 五分钟开始
 
-1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载匹配的包：大多数 Windows x64 用户用 NSIS 安装器；免安装桌面版用 `aihub-auto-desktop-windows-x64.zip`；macOS 用对应架构的 DMG；Debian/Ubuntu x64 用 `.deb`。`aihub-auto-<platform>-<arch>.zip` 是不带窗口的 standalone 路由器，适合无界面部署和其他 Linux 发行版。
+1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载匹配的包：大多数 Windows x64 用户用 NSIS 安装器；免安装桌面版用 `aihub-auto-desktop-windows-x64.zip`；macOS 用对应架构的 DMG；Debian/Ubuntu x64 用 `.deb`。`aihub-auto-headless-<platform>-<arch>.zip` 是不带窗口的 standalone 路由器，适合无界面部署和其他 Linux 发行版。
 2. 启动 `aihub-auto` 桌面应用。它会启动内置路由器并在健康检查通过后打开窗口；关闭窗口后仍在系统托盘运行。standalone 版本则直接运行压缩包中的 `aihub-auto`/`aihub-auto.exe`。
 3. 按首次使用向导登录 AIHub 账号或粘贴 Access Token。standalone 版本也可打开 <http://127.0.0.1:8787/ui>。
 4. 将你的 OpenAI 兼容客户端指向本地代理：
@@ -46,7 +46,7 @@ AIHUB_AUTO_PORT=9000 ./aihub-auto
 
 关闭主窗口只会隐藏到托盘。托盘菜单提供显示窗口、运行日志、检查更新和明确退出；退出时同时停止 sidecar。日志页通过已鉴权的 `/ctl/logs` 读取 `app.log` 最近 500 行，服务端限制为最多 1000 行/512 KiB 并再次脱敏，支持级别/文本筛选与暂停自动刷新。
 
-Windows 和 macOS 桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。Debian/Ubuntu `.deb` 由系统包管理器更新；发布同时附带免安装的 Windows 桌面 ZIP 和不带窗口的 standalone ZIP，桌面环境或更新器不可用时可直接回退。`*.sig` 与 `latest.json` 只供更新器使用，不需要手动打开。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
+Windows 和 macOS 桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。Debian/Ubuntu `.deb` 由系统包管理器更新；发布同时附带免安装的 Windows 桌面 ZIP 和文件名带 `-headless` 的无窗口 standalone ZIP，桌面环境或更新器不可用时可直接回退。`*.sig` 与 `latest.json` 只供更新器使用，不需要手动打开。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
 
 ## 日常使用
 
@@ -56,7 +56,7 @@ Windows 和 macOS 桌面应用启动后会检查 GitHub Releases。发现新版�
 2. **选择策略**：默认“均衡”；想控制成本可选“省钱”，优先速度可选“速度”。
 3. **让客户端持续使用本机 `/v1` 地址**：会话、Responses 对话链和稳定提示前缀会保持同组亲和，避免每个请求重新切组。
 
-控制台会分别显示官网真实用户、标准化云端探测和本机风险 TTFT，以及融合值、待命升档层、熔断/黑名单/延迟等排除原因、近 3 小时稳定率、会话数量、在飞请求及 Key 池状态。候选行可一键锁定/解除某个组,策略区也可自定义发往模型 API 的 User-Agent。右上角提供官方 Sentry 用户反馈入口。运行中的配置可直接保存；`keyMode` 和 `poolMaxGroups` 属于启动级配置，修改后重启生效。
+控制台会分别显示官网真实用户、标准化云端探测和本机风险 TTFT，以及融合值、待命升档层、熔断/黑名单/延迟等排除原因、近 3 小时稳定率、会话数量、在飞请求及 Key 池状态。无头 standalone 版本会在右上角标记“无头路由器”。候选行可一键锁定/解除某个组,策略区也可自定义发往模型 API 的 User-Agent。右上角提供官方 Sentry 用户反馈入口。运行中的配置可直接保存；`keyMode` 和 `poolMaxGroups` 属于启动级配置，修改后重启生效。
 
 ## 路由策略
 

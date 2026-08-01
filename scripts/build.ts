@@ -1,6 +1,6 @@
 /**
  * 6 目标交叉编译:bun build --compile。
- * 产物 artifacts/aihub-auto-{os}-{arch}.zip(内含二进制 + README)。
+ * 产物 artifacts/aihub-auto-headless-{os}-{arch}.zip(内含无头路由器 + README)。
  * 可用 AIHUB_AUTO_ARTIFACTS_DIR 覆盖输出目录。
  */
 import { mkdir, rm, cp } from "node:fs/promises";
@@ -71,7 +71,7 @@ for (const t of TARGETS) {
 	await cp(join(root, "apps/router/README.md"), join(dir, "README.md")).catch(
 		() => {},
 	);
-	const zipName = `aihub-auto-${name}.zip`;
+	const zipName = `aihub-auto-headless-${name}.zip`;
 	const zipPath = join(artifacts, zipName);
 	// 压缩:优先 zip(CI/linux/mac);Windows 开发机回退 PowerShell Compress-Archive
 	let zipped =

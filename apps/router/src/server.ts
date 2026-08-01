@@ -24,6 +24,8 @@ export interface ServerDeps {
 	persistCredentials: () => Promise<void>;
 	/** 实际使用的公共 DSN(可能来自 SENTRY_DSN 环境变量)。 */
 	sentryDsn: string;
+	/** 由 Tauri desktop sidecar 启动;否则为 standalone 无头路由器。 */
+	desktopMode: boolean;
 	syncSentryUser: (email?: string) => void;
 }
 
@@ -378,6 +380,7 @@ export async function handleControl(
 				priceBand: deps.config.priceBand,
 				economyPolicy: deps.config.economyPolicy,
 				upstreamUserAgent: deps.config.upstreamUserAgent,
+				updateMirrors: deps.config.updateMirrors,
 				cacheIdleMs: deps.config.decision.cacheIdleMs,
 				blacklist: deps.config.blacklist,
 			},
@@ -410,6 +413,7 @@ export async function handleControl(
 			needsReauth: deps.daemon.needsReauth,
 			traffic,
 			stale: round?.stale ?? false,
+			desktopMode: deps.desktopMode,
 			candidates,
 		});
 	}
@@ -498,6 +502,7 @@ export async function handleControl(
 			"priceBand",
 			"economyPolicy",
 			"upstreamUserAgent",
+			"updateMirrors",
 			"blacklist",
 			"pollIntervalMs",
 			"samples",

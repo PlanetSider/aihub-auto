@@ -596,6 +596,7 @@ describe("控制台 API", () => {
 			affinity: { sessions: number; responseAliases: number };
 			manualLock: { groupId: number | null; revision: number };
 			sentry: { dsn: string; userEmail: string | null };
+			desktopMode: boolean;
 			groups: Array<{
 				groupId: number;
 				keyId: number | null;
@@ -608,6 +609,7 @@ describe("控制台 API", () => {
 				listen: { host: string; port: number };
 				proxyAuthRequired: boolean;
 				uiAuthRequired: boolean;
+				updateMirrors: string[];
 			};
 		};
 		expect(status.currentGroupId).toBe(1);
@@ -628,10 +630,12 @@ describe("控制台 API", () => {
 		expect(status.groups.some((group) => group.groupId === 2)).toBe(false);
 		h.traffic.end(1);
 		expect(status.hasToken).toBe(true);
+		expect(status.desktopMode).toBe(false);
 		expect(status.config).toMatchObject({
 			listen: { host: "127.0.0.1", port: 0 },
 			proxyAuthRequired: false,
 			uiAuthRequired: false,
+			updateMirrors: [],
 		});
 
 		await Bun.write(
@@ -674,6 +678,8 @@ describe("控制台 API", () => {
 		expect(ui).toContain("async function verifyGuide()");
 		expect(ui).toContain('localBaseUrl()+"/models"');
 		expect(ui).toContain("需要 proxyToken");
+		expect(ui).toContain("无头路由器");
+		expect(ui).toContain("saveUpdateMirrors");
 		expect(ui).toContain(
 			'$("#guideLogin").addEventListener("click",()=>{$("#email").focus()',
 		);

@@ -1,5 +1,6 @@
 use serde::Serialize;
 use std::{
+    fs,
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
     path::PathBuf,
@@ -12,7 +13,7 @@ use std::{
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::{
@@ -22,6 +23,8 @@ use tauri_plugin_shell::{
 use tauri_plugin_updater::UpdaterExt;
 
 const GITHUB_URL: &str = "https://github.com/WSXYT/aihub-auto";
+const GITHUB_UPDATE_ENDPOINT: &str =
+    "https://github.com/WSXYT/aihub-auto/releases/latest/download/latest.json";
 
 struct RouterProcess {
     child: Mutex<Option<CommandChild>>,
@@ -87,6 +90,39 @@ fn router_config_dir() -> PathBuf {
             PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
         })
         .join("aihub-auto")
+}
+
+fn update_endpoints_from(mirrors: impl IntoIterator<Item = String>) -> Vec<Url> {
+    let mut endpoints =
+        vec![Url::parse(GITHUB_UPDATE_ENDPOINT).expect("fixed update URL must parse")];
+    for mirror in mirrors {
+        let Ok(url) = Url::parse(&mirror) else {
+            continue;
+        };
+        if url.scheme() == "https"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && !endpoints.contains(&url)
+        {
+            endpoints.push(url);
+        }
+    }
+    endpoints
+}
+
+fn update_endpoints() -> Vec<Url> {
+    let mirrors = fs::read_to_string(router_config_dir().join("config.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|config| config.get("updateMirrors")?.as_array().cloned())
+        .map(|mirrors| {
+            mirrors
+                .into_iter()
+                .filter_map(|mirror| mirror.as_str().map(ToOwned::to_owned))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    update_endpoints_from(mirrors)
 }
 
 fn desktop_shutdown_token() -> String {
@@ -384,7 +420,11 @@ fn reveal_logs(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
     let update = app
-        .updater()
+        .updater_builder()
+        .endpoints(update_endpoints())
+        .map_err(|error| error.to_string())?
+        .timeout(Duration::from_secs(8))
+        .build()
         .map_err(|error| error.to_string())?
         .check()
         .await
@@ -408,6 +448,9 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     let before_exit = app.clone();
     let updater = app
         .updater_builder()
+        .endpoints(update_endpoints())
+        .map_err(|error| error.to_string())?
+        .timeout(Duration::from_secs(8))
         .on_before_exit(move || stop_router(&before_exit))
         .build()
         .map_err(|error| error.to_string())?;
@@ -526,6 +569,18 @@ mod tests {
                 .expect("write health response");
         });
         port
+    }
+
+    #[test]
+    fn updater_tries_github_before_unique_https_mirrors() {
+        let endpoints = update_endpoints_from([
+            "https://mirror.example/latest.json".to_string(),
+            "http://insecure.example/latest.json".to_string(),
+            GITHUB_UPDATE_ENDPOINT.to_string(),
+        ]);
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(endpoints[0].as_str(), GITHUB_UPDATE_ENDPOINT);
+        assert_eq!(endpoints[1].as_str(), "https://mirror.example/latest.json");
     }
 
     #[test]
