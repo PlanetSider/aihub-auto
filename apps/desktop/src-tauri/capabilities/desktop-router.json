@@ -12,6 +12,8 @@
   "permissions": [
     "core:default",
     "allow-desktop-info",
+    "allow-autostart-enabled",
+    "allow-set-autostart",
     "allow-open-github",
     "allow-reveal-logs",
     "allow-check-for-update",

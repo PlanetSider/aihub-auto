@@ -71,7 +71,23 @@ export const UpdateMirrorSchema = z
 	.url()
 	.refine(isHttpsUrl, "更新镜像必须是 HTTPS URL");
 
-export const ConfigSchema = z.object({
+const ProxyUrlSchema = z
+	.string()
+	.url()
+	.refine(
+		(value) => {
+			try {
+				const protocol = new URL(value).protocol;
+				return protocol === "http:" || protocol === "https:";
+			} catch {
+				return false;
+			}
+		},
+		"自定义代理必须是 HTTP(S) URL",
+	);
+
+export const ConfigSchema = z
+	.object({
 	/** AIHub 站点(sub2api),usage-stats 为 aihub 自有接口 */
 	baseUrl: z.string().url().default("https://aihub.top"),
 	/** 可信反向代理对外 origin;空字符串表示不接受跨 origin 控制台请求。 */
@@ -82,6 +98,9 @@ export const ConfigSchema = z.object({
 	),
 	/** 桌面更新: GitHub 失败后依次尝试的 HTTPS latest.json 镜像。 */
 	updateMirrors: z.array(UpdateMirrorSchema).max(3).default([]),
+	/** 出站代理: none 直连,system 使用进程继承的 HTTP(S)_PROXY,custom 使用下方地址。 */
+	outboundProxyMode: z.enum(["none", "system", "custom"]).default("none"),
+	outboundProxyUrl: z.union([z.literal(""), ProxyUrlSchema]).default(""),
 	/** 模型代理请求的 User-Agent;空字符串表示沿用客户端值。 */
 	upstreamUserAgent: z
 		.string()
@@ -170,7 +189,16 @@ export const ConfigSchema = z.object({
 	/** JSONL 审计日志 */
 	auditLog: z.boolean().default(false),
 	logLevel: z.enum(["debug", "info", "warn", "error"]).default("info"),
-});
+	})
+	.superRefine((config, ctx) => {
+		if (config.outboundProxyMode === "custom" && !config.outboundProxyUrl) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["outboundProxyUrl"],
+				message: "自定义代理模式必须填写代理地址",
+			});
+		}
+	});
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
 

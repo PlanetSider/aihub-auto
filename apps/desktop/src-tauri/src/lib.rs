@@ -15,6 +15,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
@@ -65,6 +66,10 @@ struct UpdateProgress {
     finished: bool,
 }
 
+fn autostart_requested(args: impl IntoIterator<Item = String>) -> bool {
+    args.into_iter().any(|arg| arg == "--autostart")
+}
+
 fn desktop_port() -> u16 {
     if cfg!(debug_assertions) {
         8798
@@ -110,11 +115,18 @@ fn update_endpoints_from(mirrors: impl IntoIterator<Item = String>) -> Vec<Url> 
     endpoints
 }
 
-fn update_endpoints() -> Vec<Url> {
-    let mirrors = fs::read_to_string(router_config_dir().join("config.json"))
+fn desktop_config() -> serde_json::Value {
+    fs::read_to_string(router_config_dir().join("config.json"))
         .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|config| config.get("updateMirrors")?.as_array().cloned())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn update_endpoints() -> Vec<Url> {
+    let mirrors = desktop_config()
+        .get("updateMirrors")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
         .map(|mirrors| {
             mirrors
                 .into_iter()
@@ -123,6 +135,21 @@ fn update_endpoints() -> Vec<Url> {
         })
         .unwrap_or_default();
     update_endpoints_from(mirrors)
+}
+
+fn update_proxy() -> (String, Option<Url>) {
+    let config = desktop_config();
+    let mode = config
+        .get("outboundProxyMode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("none")
+        .to_string();
+    let proxy = (mode == "custom")
+        .then(|| config.get("outboundProxyUrl")?.as_str())
+        .flatten()
+        .and_then(|value| Url::parse(value).ok())
+        .filter(|url| matches!(url.scheme(), "http" | "https"));
+    (mode, proxy)
 }
 
 fn desktop_shutdown_token() -> String {
@@ -195,6 +222,10 @@ fn show_main(app: &AppHandle) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        return;
+    }
+    if let Err(error) = create_main_window(app, desktop_port()) {
+        set_startup_error(app, format!("创建主窗口失败: {error}"));
     }
 }
 
@@ -230,7 +261,7 @@ fn create_failure_window(app: &AppHandle) {
         .build();
 }
 
-fn start_router(app: &AppHandle) -> Result<(), String> {
+fn start_router(app: &AppHandle, show_window: bool) -> Result<(), String> {
     let port = desktop_port();
     let config_dir = router_config_dir();
     let shutdown_token = desktop_shutdown_token();
@@ -319,16 +350,19 @@ fn start_router(app: &AppHandle) -> Result<(), String> {
         });
         let run_handle = handle.clone();
         let _ = handle.run_on_main_thread(move || match result {
-            Ok(()) => {
+            Ok(()) if show_window => {
                 if let Err(error) = create_main_window(&run_handle, port) {
                     set_startup_error(&run_handle, format!("创建主窗口失败: {error}"));
                     create_failure_window(&run_handle);
                 }
             }
+            Ok(()) => {}
             Err(error) => {
                 stop_router(&run_handle);
                 set_startup_error(&run_handle, error);
-                create_failure_window(&run_handle);
+                if show_window {
+                    create_failure_window(&run_handle);
+                }
             }
         });
     });
@@ -397,6 +431,24 @@ fn desktop_info(app: AppHandle) -> DesktopInfo {
 }
 
 #[tauri::command]
+fn autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch()
+        .is_enabled()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable()
+    } else {
+        autostart.disable()
+    }
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn open_github(app: AppHandle) -> Result<(), String> {
     app.opener()
         .open_url(GITHUB_URL, None::<&str>)
@@ -419,16 +471,24 @@ fn reveal_logs(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
-    let update = app
+    let builder = app
         .updater_builder()
         .endpoints(update_endpoints())
         .map_err(|error| error.to_string())?
-        .timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|error| error.to_string())?
-        .check()
-        .await
-        .map_err(|error| error.to_string())?;
+        .timeout(Duration::from_secs(8));
+    let (mode, proxy) = update_proxy();
+    let update = (if mode == "none" {
+        builder.no_proxy()
+    } else if let Some(proxy) = proxy {
+        builder.proxy(proxy)
+    } else {
+        builder
+    })
+    .build()
+    .map_err(|error| error.to_string())?
+    .check()
+    .await
+    .map_err(|error| error.to_string())?;
     Ok(match update {
         Some(update) => UpdateInfo {
             available: true,
@@ -446,14 +506,22 @@ async fn check_for_update(app: AppHandle) -> Result<UpdateInfo, String> {
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
     let before_exit = app.clone();
-    let updater = app
+    let builder = app
         .updater_builder()
         .endpoints(update_endpoints())
         .map_err(|error| error.to_string())?
         .timeout(Duration::from_secs(8))
-        .on_before_exit(move || stop_router(&before_exit))
-        .build()
-        .map_err(|error| error.to_string())?;
+        .on_before_exit(move || stop_router(&before_exit));
+    let (mode, proxy) = update_proxy();
+    let updater = (if mode == "none" {
+        builder.no_proxy()
+    } else if let Some(proxy) = proxy {
+        builder.proxy(proxy)
+    } else {
+        builder
+    })
+    .build()
+    .map_err(|error| error.to_string())?;
     let update = updater
         .check()
         .await
@@ -502,6 +570,10 @@ pub fn run() {
             show_main(app)
         }))
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_log::Builder::default().build())
@@ -514,6 +586,8 @@ pub fn run() {
         .manage(StartupError(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             desktop_info,
+            autostart_enabled,
+            set_autostart,
             open_github,
             restart_desktop,
             reveal_logs,
@@ -522,7 +596,8 @@ pub fn run() {
         ])
         .setup(|app| {
             build_tray(app)?;
-            if let Err(error) = start_router(app.handle()) {
+            let show_window = !autostart_requested(std::env::args());
+            if let Err(error) = start_router(app.handle(), show_window) {
                 log::error!("router sidecar start failed:{error}");
                 set_startup_error(app.handle(), error);
                 create_failure_window(app.handle());
@@ -581,6 +656,15 @@ mod tests {
         assert_eq!(endpoints.len(), 2);
         assert_eq!(endpoints[0].as_str(), GITHUB_UPDATE_ENDPOINT);
         assert_eq!(endpoints[1].as_str(), "https://mirror.example/latest.json");
+    }
+
+    #[test]
+    fn autostart_flag_keeps_startup_hidden() {
+        assert!(autostart_requested([
+            "app".to_string(),
+            "--autostart".to_string()
+        ]));
+        assert!(!autostart_requested(["app".to_string()]));
     }
 
     #[test]

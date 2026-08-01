@@ -13,6 +13,7 @@ import {
 	loadState,
 	SentryDsnSchema,
 	validateListenSecurity,
+	type AppConfig,
 } from "./config.ts";
 import { RouteDaemon } from "./daemon.ts";
 import { RouteExecutor } from "./executor.ts";
@@ -32,6 +33,28 @@ import {
 	initRouterSentry,
 	syncSentryUser,
 } from "./sentry.ts";
+
+function upstreamProxy(config: AppConfig): string | undefined {
+	if (config.outboundProxyMode === "custom") return config.outboundProxyUrl;
+	if (config.outboundProxyMode === "system") {
+		return (
+			process.env["HTTPS_PROXY"] ??
+			process.env["https_proxy"] ??
+			process.env["HTTP_PROXY"] ??
+			process.env["http_proxy"]
+		);
+	}
+	return undefined;
+}
+
+function upstreamFetch(config: AppConfig): typeof globalThis.fetch {
+	return ((input: Request | string | URL, init?: RequestInit) => {
+		const proxy = upstreamProxy(config);
+		return proxy
+			? Bun.fetch(input, { ...init, proxy } as RequestInit)
+			: Bun.fetch(input, init);
+	}) as typeof globalThis.fetch;
+}
 
 async function main(): Promise<void> {
 	const startup = parseStartupOptions(process.argv.slice(2), process.env);
@@ -113,9 +136,11 @@ async function main(): Promise<void> {
 		process.exit(1);
 	}
 
+	const fetchUpstream = upstreamFetch(config);
 	const client = new AIHubClient({
 		baseUrl: config.baseUrl,
 		token: () => credentials.accessToken,
+		fetch: fetchUpstream,
 	});
 
 	const breaker = CircuitBreaker.fromJSON(state.breaker);
@@ -258,6 +283,7 @@ async function main(): Promise<void> {
 		ttfbTimeoutMs: config.ttfbTimeoutMs,
 		proxyToken: config.proxyToken,
 		upstreamUserAgent: () => config.upstreamUserAgent,
+		fetch: fetchUpstream,
 	};
 
 	let server: ReturnType<typeof createServer>;

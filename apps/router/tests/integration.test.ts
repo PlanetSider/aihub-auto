@@ -610,6 +610,8 @@ describe("控制台 API", () => {
 				proxyAuthRequired: boolean;
 				uiAuthRequired: boolean;
 				updateMirrors: string[];
+				outboundProxyMode: "none" | "system" | "custom";
+				outboundProxyUrl: string;
 			};
 		};
 		expect(status.currentGroupId).toBe(1);
@@ -636,6 +638,8 @@ describe("控制台 API", () => {
 			proxyAuthRequired: false,
 			uiAuthRequired: false,
 			updateMirrors: [],
+			outboundProxyMode: "none",
+			outboundProxyUrl: "",
 		});
 
 		await Bun.write(
@@ -680,6 +684,12 @@ describe("控制台 API", () => {
 		expect(ui).toContain("需要 proxyToken");
 		expect(ui).toContain("无头路由器");
 		expect(ui).toContain("saveUpdateMirrors");
+		expect(ui).toContain("账户余额");
+		expect(ui).toContain("/ctl/account");
+		expect(ui).toContain("outboundProxyMode");
+		expect(ui).toContain("saveOutboundProxy");
+		expect(ui).toContain("autostart_enabled");
+		expect(ui).toContain("set_autostart");
 		expect(ui).toContain(
 			'$("#guideLogin").addEventListener("click",()=>{$("#email").focus()',
 		);
@@ -748,6 +758,23 @@ describe("控制台 API", () => {
 		});
 		expect(badUaRes.status).toBe(400);
 		expect(h.config.upstreamUserAgent).toBe("BenefitClient/2.0");
+		const proxyRes = await fetch(`${base}/ctl/config`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				outboundProxyMode: "custom",
+				outboundProxyUrl: "http://127.0.0.1:7890",
+			}),
+		});
+		expect(proxyRes.status).toBe(200);
+		expect(h.config.outboundProxyMode).toBe("custom");
+		expect(h.config.outboundProxyUrl).toBe("http://127.0.0.1:7890");
+		const badProxyRes = await fetch(`${base}/ctl/config`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ outboundProxyMode: "custom", outboundProxyUrl: "" }),
+		});
+		expect(badProxyRes.status).toBe(400);
 
 		const restartRes = await fetch(`${base}/ctl/config`, {
 			method: "POST",
@@ -778,6 +805,10 @@ describe("控制台 API", () => {
 			response.json(),
 		)) as { sentry: { userEmail: string | null } };
 		expect(loggedInStatus.sentry.userEmail).toBe("mock@test.local");
+		const account = (await fetch(`${base}/ctl/account`).then((response) =>
+			response.json(),
+		)) as { email: string | null; balance: number | null };
+		expect(account).toEqual({ email: "mock@test.local", balance: 12.34 });
 
 		// 直接 token 登录属于新身份边界,不得沿用上一个账号的 refresh token。
 		h.credentials.refreshToken = "stale-account-refresh";

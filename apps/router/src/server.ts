@@ -1,4 +1,4 @@
-import type { AIHubClient, ExcludeReason } from "@aihub-auto/core";
+import { AIHubApiError, type AIHubClient, type ExcludeReason } from "@aihub-auto/core";
 import { join } from "node:path";
 import type { AppConfig, AppState, Credentials, FileStore } from "./config.ts";
 import { ConfigSchema } from "./config.ts";
@@ -37,6 +37,17 @@ function json(body: unknown, status = 200): Response {
 			"Content-Type": "application/json",
 		},
 	});
+}
+
+function accountBalance(profile: Record<string, unknown>): number | null {
+	const value = profile["balance"];
+	const balance =
+		typeof value === "number"
+			? value
+			: typeof value === "string" && value.trim() !== ""
+				? Number(value)
+				: NaN;
+	return Number.isFinite(balance) ? balance : null;
 }
 
 function sentryOrigin(dsn: string): string | undefined {
@@ -159,6 +170,22 @@ export async function handleControl(
 			lines: await readLogTail(join(deps.store.dir, "app.log"), limit),
 			at: Date.now(),
 		});
+	}
+
+	if (path === "/ctl/account" && req.method === "GET") {
+		if (!deps.credentials.accessToken) return json({ email: null, balance: null });
+		try {
+			const profile = await deps.client.me();
+			return json({
+				email: deps.credentials.email ?? null,
+				balance: accountBalance(profile),
+			});
+		} catch (error) {
+			return json(
+				{ error: "读取 AIHub 账户信息失败" },
+				error instanceof AIHubApiError && error.status === 401 ? 401 : 502,
+			);
+		}
 	}
 
 	if (path === "/ctl/status" && req.method === "GET") {
@@ -381,6 +408,8 @@ export async function handleControl(
 				economyPolicy: deps.config.economyPolicy,
 				upstreamUserAgent: deps.config.upstreamUserAgent,
 				updateMirrors: deps.config.updateMirrors,
+				outboundProxyMode: deps.config.outboundProxyMode,
+				outboundProxyUrl: deps.config.outboundProxyUrl,
 				cacheIdleMs: deps.config.decision.cacheIdleMs,
 				blacklist: deps.config.blacklist,
 			},
@@ -503,6 +532,8 @@ export async function handleControl(
 			"economyPolicy",
 			"upstreamUserAgent",
 			"updateMirrors",
+			"outboundProxyMode",
+			"outboundProxyUrl",
 			"blacklist",
 			"pollIntervalMs",
 			"samples",

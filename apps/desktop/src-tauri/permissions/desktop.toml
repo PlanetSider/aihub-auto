@@ -4,6 +4,16 @@ description = "Expose desktop version, port and config metadata."
 commands.allow = ["desktop_info"]
 
 [[permission]]
+identifier = "allow-autostart-enabled"
+description = "Read whether aihub-auto starts silently after OS login."
+commands.allow = ["autostart_enabled"]
+
+[[permission]]
+identifier = "allow-set-autostart"
+description = "Enable or disable silent OS-login startup for aihub-auto."
+commands.allow = ["set_autostart"]
+
+[[permission]]
 identifier = "allow-open-github"
 description = "Open the fixed aihub-auto GitHub project URL."
 commands.allow = ["open_github"]

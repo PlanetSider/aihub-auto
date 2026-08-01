@@ -134,7 +134,7 @@ export class MockAIHub {
 		if (path === "/api/v1/auth/me") {
 			if (this.expireToken)
 				return this.json({ code: 1, message: "unauthorized" }, 401);
-			return this.envelope({ email: "mock@test.local" });
+			return this.envelope({ email: "mock@test.local", balance: 12.34 });
 		}
 
 		// ---- 账号可用组/倍率 ----
