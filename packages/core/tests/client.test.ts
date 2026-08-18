@@ -123,6 +123,7 @@ describe("AIHubClient.getProviderLatencyStats", () => {
 								user_avg_ttft_ms: 2400,
 								user_sample_count: 50,
 								user_has_data: true,
+								models: ["gpt-5", "gpt-5-mini"],
 							},
 							{
 								group_id: 4,
@@ -154,6 +155,8 @@ describe("AIHubClient.getProviderLatencyStats", () => {
 			cloudProbeTtftMs: 1200,
 			userAvgTtftMs: 2400,
 			userSampleCount: 50,
+			supportedModels: ["gpt-5", "gpt-5-mini"],
+			modelAvailabilityKnown: true,
 		});
 		expect(providers.get(4)).toEqual({
 			groupId: 4,

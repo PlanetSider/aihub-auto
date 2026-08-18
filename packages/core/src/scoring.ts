@@ -35,6 +35,15 @@ function positive(value: number | undefined): number | undefined {
 		: undefined;
 }
 
+function supportsModel(models: readonly string[] | undefined, requested: string): boolean {
+	if (!models) return true;
+	const target = requested.trim().toLowerCase();
+	return models.some((model) => {
+		const candidate = model.trim().toLowerCase();
+		return candidate === target || (candidate.endsWith("*") && target.startsWith(candidate.slice(0, -1)));
+	});
+}
+
 function geometricMean(values: readonly number[]): number | undefined {
 	if (values.length === 0) return undefined;
 	if (values.length === 1) return values[0];
@@ -111,6 +120,14 @@ export function evaluate(
 			(allowed && !allowed.has(stat.groupId))
 		) {
 			excluded.push(exclude(stat, "unavailable_group"));
+			continue;
+		}
+		if (
+			options.model &&
+			stat.modelAvailabilityKnown === true &&
+			!supportsModel(stat.supportedModels, options.model)
+		) {
+			excluded.push(exclude(stat, "model_unavailable"));
 			continue;
 		}
 

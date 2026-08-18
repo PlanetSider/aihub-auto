@@ -32,6 +32,18 @@ describe("硬过滤", () => {
 		]);
 	});
 
+	test("模型能力已知且不支持时排除分组", () => {
+		const ev = evaluate(
+			[
+				stat({ groupId: 1, supportedModels: ["gpt-5"], modelAvailabilityKnown: true }),
+				stat({ groupId: 2, supportedModels: ["claude-*"], modelAvailabilityKnown: true }),
+			],
+			opts({ model: "gpt-5" }),
+		);
+		expect(ev.eligible.map((candidate) => candidate.stat.groupId)).toEqual([1]);
+		expect(ev.excluded[0]?.excludeReason).toBe("model_unavailable");
+	});
+
 	test("价格区间硬边界:0.15 含,0.151 排除", () => {
 		const ev = evaluate(
 			[

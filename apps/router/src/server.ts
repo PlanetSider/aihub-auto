@@ -194,6 +194,7 @@ export async function handleControl(
 		const candidates: Array<{
 			groupId: number;
 			code: string;
+			models?: string[];
 			rate: number;
 			ttft?: number;
 			conservative?: number;
@@ -218,6 +219,7 @@ export async function handleControl(
 				candidates.push({
 					groupId: c.stat.groupId,
 					code: c.stat.code,
+					models: c.stat.supportedModels,
 					rate: c.effectiveRate,
 					ttft: Math.round(c.blendedTtftMs),
 					conservative: Math.round(c.conservativeLatencyMs),
@@ -244,6 +246,7 @@ export async function handleControl(
 				candidates.push({
 					groupId: c.stat.groupId,
 					code: c.stat.code,
+					models: c.stat.supportedModels,
 					rate: c.effectiveRate,
 					ttft: Math.round(c.blendedTtftMs),
 					conservative: Math.round(c.conservativeLatencyMs),
@@ -271,6 +274,7 @@ export async function handleControl(
 				candidates.push({
 					groupId: e.stat.groupId,
 					code: e.stat.code,
+					models: e.stat.supportedModels,
 					rate: e.effectiveRate ?? e.stat.rateMultiplier,
 					ttft: e.evidence ? Math.round(e.evidence.blendedTtftMs) : undefined,
 					conservative: e.evidence
@@ -402,6 +406,7 @@ export async function handleControl(
 				proxyAuthRequired: Boolean(deps.config.proxyToken),
 				uiAuthRequired: Boolean(deps.config.uiPassword),
 				mode: deps.config.mode,
+				accountPoolMode: deps.config.accountPoolMode,
 				keyMode: deps.config.keyMode,
 				poolMaxGroups: deps.config.poolMaxGroups,
 				priceBand: deps.config.priceBand,
@@ -528,6 +533,7 @@ export async function handleControl(
 		}
 		const allowed = [
 			"mode",
+			"accountPoolMode",
 			"priceBand",
 			"economyPolicy",
 			"upstreamUserAgent",

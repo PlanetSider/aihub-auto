@@ -132,6 +132,7 @@ export class RouteDaemon {
 		if (groups.status === "fulfilled") {
 			this.allowedGroupIds = groups.value
 				.filter((group) => !group.platform || group.platform === "openai")
+				.filter((group) => this.matchesAccountPool(group.name))
 				.map((group) => group.id)
 				.filter((id) => Number.isInteger(id) && id > 0);
 		}
@@ -192,6 +193,7 @@ export class RouteDaemon {
 		const forceReasons = new Set([
 			"platform_mismatch",
 			"unavailable_group",
+			"model_unavailable",
 			"invalid_rate",
 			"price_band",
 			"blacklisted",
@@ -455,7 +457,7 @@ export class RouteDaemon {
 		request: RouteRequest,
 	): Promise<ActiveKey | undefined> {
 		const now = Date.now();
-		const items = await this.routingItems();
+		const items = await this.routingItems(request.model);
 		const blocked = new Set(request.failedGroupIds ?? []);
 		for (const groupId of this.modelBlockedGroupIds(request.model, now)) {
 			blocked.add(groupId);
@@ -507,7 +509,7 @@ export class RouteDaemon {
 		request: RouteRequest,
 	): Promise<ActiveKey | undefined> {
 		const now = Date.now();
-		const items = await this.routingItems();
+		const items = await this.routingItems(request.model);
 		const failed = new Set(request.failedGroupIds ?? []);
 		for (const groupId of this.modelBlockedGroupIds(request.model, now)) {
 			failed.add(groupId);
@@ -586,10 +588,29 @@ export class RouteDaemon {
 		return this.prepareRequestKey(groupId, request, previousGroupId, now);
 	}
 
-	private async routingItems(): Promise<GroupStat[]> {
+	private async routingItems(model?: string): Promise<GroupStat[]> {
 		const cached = this.lastStats.get("openai")?.items;
-		if (cached?.length) return cached;
-		return (await this.fetchStats("openai")).items;
+		const items = cached?.length ? cached : (await this.fetchStats("openai")).items;
+		if (!model) return items;
+		const requested = model.trim().toLowerCase();
+		return items.filter((item) =>
+			item.modelAvailabilityKnown !== true ||
+			(item.supportedModels ?? []).some((candidate) => {
+				const normalized = candidate.toLowerCase();
+				return normalized === requested ||
+					(normalized.endsWith("*") && requested.startsWith(normalized.slice(0, -1)));
+			}),
+		);
+	}
+
+	private matchesAccountPool(name: string): boolean {
+		const mode = this.deps.config.accountPoolMode;
+		if (mode === "all") return true;
+		const value = name.trim().toLowerCase();
+		if (mode === "plus") return /plus/.test(value);
+		if (mode === "pro") return /pro/.test(value);
+		if (mode === "team") return /team/.test(value);
+		return /mixed|hybrid|mix|混合/.test(value);
 	}
 
 	private hardEligible(

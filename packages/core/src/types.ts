@@ -22,6 +22,9 @@ export interface GroupStat {
 	/** ISO 8601 */
 	lastSampleAt: string;
 	groupId: number;
+	/** Updated upstream model availability; absent means capability data is unavailable. */
+	supportedModels?: string[];
+	modelAvailabilityKnown?: boolean;
 }
 
 export interface UsageStatsPage {
@@ -37,6 +40,8 @@ export interface ProviderLatencyStat {
 	cloudProbeTtftMs?: number;
 	userAvgTtftMs?: number;
 	userSampleCount: number;
+	supportedModels?: string[];
+	modelAvailabilityKnown?: boolean;
 }
 
 export interface GroupInfo {
@@ -130,6 +135,8 @@ export interface ScoringOptions {
 	errorRateCap: number;
 	/** 目标平台 */
 	platform: Platform;
+	/** Optional requested model used to enforce upstream capability data. */
+	model?: string;
 	/** epoch ms */
 	now: number;
 }
@@ -137,6 +144,7 @@ export interface ScoringOptions {
 export type ExcludeReason =
 	| "platform_mismatch"
 	| "unavailable_group"
+	| "model_unavailable"
 	| "invalid_rate"
 	| "price_band"
 	| "blacklisted"

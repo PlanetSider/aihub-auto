@@ -117,6 +117,8 @@ export const ConfigSchema = z
 		})
 		.prefault({}),
 	mode: z.enum(["economy", "balanced", "speed"]).default("balanced"),
+	/** 按分组名称选择 Plus/Pro/Team/混合号池; all 不区分名称。 */
+	accountPoolMode: z.enum(["all", "plus", "pro", "team", "mixed"]).default("all"),
 	priceBand: z
 		.object({
 			min: z.number().min(0).default(DEFAULT_PRICE_BAND.min),

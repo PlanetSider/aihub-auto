@@ -53,12 +53,37 @@ function asRecord(v: unknown): Record<string, unknown> {
 		: {};
 }
 
+function modelNames(raw: unknown): string[] | undefined {
+	if (!Array.isArray(raw)) return undefined;
+	return raw
+		.map((item) =>
+			typeof item === "string"
+				? item
+				: str(asRecord(item)["model"] ?? asRecord(item)["name"] ?? asRecord(item)["id"]),
+		)
+		.map((value) => value.trim())
+		.filter(Boolean);
+}
+
+function supportedModelsFrom(record: Record<string, unknown>): {
+	models?: string[];
+	known?: boolean;
+} {
+	for (const key of ["models", "supported_models", "available_models", "model_names"]) {
+		if (!(key in record)) continue;
+		const models = modelNames(record[key]);
+		return { models: models ?? [], known: models !== undefined };
+	}
+	return {};
+}
+
 export function parseGroupStat(raw: unknown): GroupStat | undefined {
 	const r = asRecord(raw);
 	const platform = str(r["platform"]);
 	if (platform !== "openai") return undefined;
 	const groupId = num(r["group_id"] ?? r["groupId"]);
 	if (!Number.isFinite(groupId)) return undefined;
+	const capability = supportedModelsFrom(r);
 	return {
 		code: str(r["code"]),
 		platform,
@@ -67,6 +92,9 @@ export function parseGroupStat(raw: unknown): GroupStat | undefined {
 		sampleCount: num(r["sample_count"] ?? r["sampleCount"]) || 0,
 		lastSampleAt: str(r["last_sample_at"] ?? r["lastSampleAt"]),
 		groupId,
+		...(capability.known
+			? { supportedModels: capability.models, modelAvailabilityKnown: true }
+			: {}),
 	};
 }
 
@@ -101,6 +129,7 @@ export function parseProviderLatencyStat(
 		userHasData === false
 			? undefined
 			: positive(r["user_avg_ttft_ms"] ?? r["userAvgTtftMs"]);
+	const capability = supportedModelsFrom(r);
 	return {
 		groupId,
 		platform,
@@ -116,6 +145,9 @@ export function parseProviderLatencyStat(
 							num(r["user_sample_count"] ?? r["userSampleCount"]) || 0,
 						),
 					),
+		...(capability.known
+			? { supportedModels: capability.models, modelAvailabilityKnown: true }
+			: {}),
 	};
 }
 
@@ -132,6 +164,9 @@ export function mergeProviderLatencies(
 					cloudProbeTtftMs: provider.cloudProbeTtftMs,
 					userAvgTtftMs: provider.userAvgTtftMs,
 					userSampleCount: provider.userSampleCount,
+					...(provider.modelAvailabilityKnown
+						? { supportedModels: provider.supportedModels, modelAvailabilityKnown: true }
+						: {}),
 				}
 			: stat;
 	});
