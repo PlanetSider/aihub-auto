@@ -117,14 +117,17 @@ export const ConfigSchema = z
 		})
 		.prefault({}),
 	mode: z.enum(["economy", "balanced", "speed"]).default("balanced"),
-	/** 按分组名称选择 Plus/Pro/Team/混合号池; all 不区分名称。 */
+	/** 旧版单选号池，保留以兼容已有配置；accountPoolPlans 优先。 */
 	accountPoolMode: z.enum(["all", "plus", "pro", "team", "mixed"]).default("all"),
+	/** 按分组名称筛选套餐；留空表示不筛选，多个值表示它们的并集。 */
+	accountPoolPlans: z.array(z.enum(["plus", "pro", "team"])).max(3).default([]),
 	priceBand: z
 		.object({
 			min: z.number().min(0).default(DEFAULT_PRICE_BAND.min),
 			max: z.number().min(0).default(DEFAULT_PRICE_BAND.max),
 		})
-		.prefault({}),
+		.nullable()
+		.default(DEFAULT_PRICE_BAND),
 	blacklist: z.array(z.number().int()).default([]),
 	economyPolicy: z
 		.object({
@@ -203,6 +206,20 @@ export const ConfigSchema = z
 	});
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
+
+// The managed sub2api deployment supplies these secrets to both services.
+export function applyManagedSecretOverrides(
+	config: AppConfig,
+	env: Record<string, string | undefined>,
+): AppConfig {
+	const uiPassword = env["AIHUB_AUTO_UI_PASSWORD"]?.trim();
+	const proxyToken = env["AIHUB_AUTO_PROXY_TOKEN"]?.trim();
+	return ConfigSchema.parse({
+		...config,
+		...(uiPassword ? { uiPassword } : {}),
+		...(proxyToken ? { proxyToken } : {}),
+	});
+}
 
 export const StateSchema = z.object({
 	currentGroupId: z.number().int().optional(),

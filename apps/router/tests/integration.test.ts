@@ -722,7 +722,7 @@ describe("控制台 API", () => {
 		});
 		expect(cfgRes.status).toBe(200);
 		expect(h.config.mode).toBe("speed");
-		expect(h.config.priceBand.max).toBe(0.3);
+		expect(h.config.priceBand?.max).toBe(0.3);
 
 		h.config.economyPolicy = {
 			minOutcomeSamples: 9,
@@ -739,6 +739,14 @@ describe("控制台 API", () => {
 		});
 		expect(partialCfgRes.status).toBe(200);
 		expect(h.config.priceBand).toEqual({ min: 0, max: 0.25 });
+		const unboundedCfgRes = await fetch(`${base}/ctl/config`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ priceBand: null }),
+		});
+		expect(unboundedCfgRes.status).toBe(200);
+		expect(h.config.priceBand).toBeNull();
+		expect(h.daemon.scoringOptions("openai", Date.now()).priceBand.max).toBe(Number.MAX_VALUE);
 		expect(h.config.economyPolicy).toEqual({
 			minOutcomeSamples: 9,
 			minSuccessRate: 0.85,

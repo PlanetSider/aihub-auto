@@ -63,6 +63,19 @@ export interface RouteRequest {
 	failedGroupIds?: readonly number[];
 }
 
+export function matchesAccountPool(
+	name: string,
+	configured: readonly ("plus" | "pro" | "team")[],
+	legacy: "all" | "plus" | "pro" | "team" | "mixed",
+): boolean {
+	const plans = configured.length
+		? configured
+		: legacy === "all" ? [] : legacy === "mixed" ? ["plus", "pro", "team"] : [legacy];
+	if (!plans.length) return true;
+	const value = name.trim().toLowerCase();
+	return plans.some((plan) => new RegExp(`\\b${plan}\\b`, "i").test(value));
+}
+
 /** 公开统计控制面 + 请求本地 P2C/Peak-EWMA 路由面。 */
 export class RouteDaemon {
 	private timer: ReturnType<typeof setTimeout> | undefined;
@@ -159,7 +172,7 @@ export class RouteDaemon {
 		const config = this.deps.config;
 		return {
 			mode: config.mode,
-			priceBand: config.priceBand,
+			priceBand: config.priceBand ?? { min: 0, max: Number.MAX_VALUE },
 			blacklist: [...config.blacklist, ...extraBlacklist],
 			circuitOpenGroupIds: this.breakerGroupIds(now, allowHalfOpen),
 			economyPolicy: config.economyPolicy,
@@ -604,13 +617,7 @@ export class RouteDaemon {
 	}
 
 	private matchesAccountPool(name: string): boolean {
-		const mode = this.deps.config.accountPoolMode;
-		if (mode === "all") return true;
-		const value = name.trim().toLowerCase();
-		if (mode === "plus") return /plus/.test(value);
-		if (mode === "pro") return /pro/.test(value);
-		if (mode === "team") return /team/.test(value);
-		return /mixed|hybrid|mix|混合/.test(value);
+		return matchesAccountPool(name, this.deps.config.accountPoolPlans, this.deps.config.accountPoolMode);
 	}
 
 	private hardEligible(

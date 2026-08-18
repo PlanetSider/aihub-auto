@@ -407,6 +407,7 @@ export async function handleControl(
 				uiAuthRequired: Boolean(deps.config.uiPassword),
 				mode: deps.config.mode,
 				accountPoolMode: deps.config.accountPoolMode,
+				accountPoolPlans: deps.config.accountPoolPlans,
 				keyMode: deps.config.keyMode,
 				poolMaxGroups: deps.config.poolMaxGroups,
 				priceBand: deps.config.priceBand,
@@ -534,6 +535,7 @@ export async function handleControl(
 		const allowed = [
 			"mode",
 			"accountPoolMode",
+			"accountPoolPlans",
 			"priceBand",
 			"economyPolicy",
 			"upstreamUserAgent",
@@ -554,7 +556,7 @@ export async function handleControl(
 				typeof patch.priceBand === "object" &&
 				!Array.isArray(patch.priceBand)
 			) {
-				merged.priceBand = { ...deps.config.priceBand, ...patch.priceBand };
+				merged.priceBand = { ...(deps.config.priceBand ?? {}), ...patch.priceBand };
 			}
 			if (
 				patch.economyPolicy &&

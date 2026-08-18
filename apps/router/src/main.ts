@@ -6,6 +6,7 @@ import {
 } from "@aihub-auto/core";
 import { join } from "node:path";
 import {
+	applyManagedSecretOverrides,
 	configDir,
 	FileStore,
 	loadConfig,
@@ -64,7 +65,10 @@ async function main(): Promise<void> {
 	}
 	const dir = configDir();
 	const store = new FileStore(dir);
-	let config = applyStartupOptions(await loadConfig(store), startup);
+	let config = applyManagedSecretOverrides(
+		applyStartupOptions(await loadConfig(store), startup),
+		process.env,
+	);
 	// The desktop sidecar must not inherit a standalone LAN bind from config.json.
 	if (process.env["AIHUB_AUTO_DESKTOP"] === "1") {
 		config = { ...config, listen: { ...config.listen, host: "127.0.0.1" } };

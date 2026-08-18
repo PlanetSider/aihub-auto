@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { ConfigSchema } from "../src/config.ts";
+import { applyManagedSecretOverrides, ConfigSchema } from "../src/config.ts";
+import { matchesAccountPool } from "../src/daemon.ts";
 import {
 	applyStartupOptions,
 	parseStartupOptions,
@@ -37,6 +38,27 @@ describe("startup options", () => {
 		expect(parseStartupOptions(["--help"], {}).help).toBe(true);
 		expect(STARTUP_HELP).toContain("--port");
 		expect(STARTUP_HELP).toContain("AIHUB_AUTO_PORT");
+	});
+
+	test("account pool plans are explicit unions", () => {
+		expect(matchesAccountPool("TEAM PLUS 混池", ["plus", "team"], "all")).toBe(true);
+		expect(matchesAccountPool("Pro 专线", ["plus", "team"], "all")).toBe(false);
+		expect(matchesAccountPool("任意分组", [], "all")).toBe(true);
+		expect(ConfigSchema.parse({ accountPoolPlans: ["team", "plus"] }).accountPoolPlans).toEqual(["team", "plus"]);
+	});
+
+	test("managed secrets override persisted router secrets", () => {
+		const persisted = ConfigSchema.parse({
+			uiPassword: "persisted-console-password",
+			proxyToken: "persisted-proxy-token",
+		});
+		const effective = applyManagedSecretOverrides(persisted, {
+			AIHUB_AUTO_UI_PASSWORD: "managed-console-password",
+			AIHUB_AUTO_PROXY_TOKEN: "managed-proxy-token",
+		});
+		expect(effective.uiPassword).toBe("managed-console-password");
+		expect(effective.proxyToken).toBe("managed-proxy-token");
+		expect(persisted.uiPassword).toBe("persisted-console-password");
 	});
 
 	test("override changes memory but leaves the loaded object unchanged", () => {
