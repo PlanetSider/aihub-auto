@@ -42,6 +42,8 @@ describe("startup options", () => {
 
 	test("account pool plans are explicit unions", () => {
 		expect(matchesAccountPool("TEAM PLUS 混池", ["plus", "team"], "all")).toBe(true);
+		expect(matchesAccountPool("A001-Team/K12", ["team"], "all")).toBe(true);
+		expect(matchesAccountPool("A008-BugTeam", ["team"], "all")).toBe(false);
 		expect(matchesAccountPool("Pro 专线", ["plus", "team"], "all")).toBe(false);
 		expect(matchesAccountPool("任意分组", [], "all")).toBe(true);
 		expect(ConfigSchema.parse({ accountPoolPlans: ["team", "plus"] }).accountPoolPlans).toEqual(["team", "plus"]);
