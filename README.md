@@ -156,13 +156,13 @@ docker run -d \
   -p 127.0.0.1:8787:8787 \
   -e AIHUB_AUTO_PROXY_TOKEN='replace-with-at-least-16-characters' \
   -e AIHUB_AUTO_UI_PASSWORD='replace-with-at-least-12-characters' \
-  -v aihub-auto-data:/data \
+  -v ./data:/data \
   ghcr.io/planetsider/aihub-auto:latest
 ```
 
 这里将端口只映射到宿主机 `127.0.0.1`。如果需要从局域网或公网访问，请阅读下方网络部署说明，并在可信反向代理后提供 TLS。
 
-容器内固定使用 `/data` 保存配置、凭据、状态和日志，并以非 root 用户运行。模型接口需要使用 `AIHUB_AUTO_PROXY_TOKEN` 作为客户端 API Key；打开控制台时则输入 `AIHUB_AUTO_UI_PASSWORD`。
+容器内固定使用 `/data` 保存配置、凭据、状态和日志，并以非 root 用户运行；Compose 会把它直接映射到宿主机的 `AIHUB_AUTO_DATA_DIR`（默认 `./data`），便于查看、备份和迁移。Linux 主机首次部署前建议执行 `mkdir -p data && sudo chown -R 10001:10001 data`，避免容器用户没有写入权限。模型接口需要使用 `AIHUB_AUTO_PROXY_TOKEN` 作为客户端 API Key；打开控制台时则输入 `AIHUB_AUTO_UI_PASSWORD`。
 
 本地构建镜像：
 
@@ -172,7 +172,7 @@ docker build -t aihub-auto:local .
 
 ### Docker Compose 部署
 
-仓库提供 [`compose.yaml`](compose.yaml) 和 [`.env.example`](.env.example)。Compose 默认从 GHCR 拉取 `latest` 镜像，将数据保存到命名卷，并只把服务发布到宿主机 `127.0.0.1:8787`：
+仓库提供 [`compose.yaml`](compose.yaml) 和 [`.env.example`](.env.example)。Compose 默认从 GHCR 拉取 `latest` 镜像，将容器 `/data` 直接绑定到项目目录下的 `./data`，并只把服务发布到宿主机 `127.0.0.1:8787`：
 
 ```bash
 cp .env.example .env
@@ -196,7 +196,7 @@ docker compose pull
 docker compose up -d
 ```
 
-切换版本时，在 `.env` 中设置 `AIHUB_AUTO_IMAGE_TAG`，例如 `1.2.3` 或 `sha-<commit>`，然后重新执行上面的升级命令。不要执行 `docker compose down -v`，除非确认要删除 AIHub 凭据、Key 池、会话状态和日志。
+切换版本时，在 `.env` 中设置 `AIHUB_AUTO_IMAGE_TAG`，例如 `1.2.3` 或 `sha-<commit>`，然后重新执行上面的升级命令。数据位于 `.env` 的 `AIHUB_AUTO_DATA_DIR` 指定目录，停止或升级容器不会删除这些文件；如需清空数据，请先停止服务，再明确删除该宿主机目录。
 
 需要从局域网访问时，将 `.env` 中的 `AIHUB_AUTO_BIND` 改为 `0.0.0.0`，并确保 `AIHUB_AUTO_PROXY_TOKEN`、`AIHUB_AUTO_UI_PASSWORD` 使用足够长的随机值；公网场景仍应在可信反向代理后提供 TLS。宿主机端口可通过 `AIHUB_AUTO_PUBLISHED_PORT` 修改，容器内部端口保持为 `8787`。
 

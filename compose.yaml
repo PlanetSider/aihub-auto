@@ -13,7 +13,4 @@ services:
       AIHUB_AUTO_PROXY_TOKEN: "${AIHUB_AUTO_PROXY_TOKEN:?set AIHUB_AUTO_PROXY_TOKEN in .env}"
       AIHUB_AUTO_UI_PASSWORD: "${AIHUB_AUTO_UI_PASSWORD:?set AIHUB_AUTO_UI_PASSWORD in .env}"
     volumes:
-      - aihub-auto-data:/data
-
-volumes:
-  aihub-auto-data:
+      - "${AIHUB_AUTO_DATA_DIR:-./data}:/data"
