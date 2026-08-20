@@ -41,11 +41,24 @@ describe("startup options", () => {
 	});
 
 	test("account pool plans are explicit unions", () => {
-		expect(matchesAccountPool("TEAM PLUS 混池", ["plus", "team"], "all")).toBe(true);
-		expect(matchesAccountPool("A001-Team/K12", ["team"], "all")).toBe(true);
-		expect(matchesAccountPool("A008-BugTeam", ["team"], "all")).toBe(false);
-		expect(matchesAccountPool("Pro 专线", ["plus", "team"], "all")).toBe(false);
-		expect(matchesAccountPool("任意分组", [], "all")).toBe(true);
+		const cases = [
+			["A003-Plus", ["plus"], true],
+			["A003-Pro", ["pro"], true],
+			["A001-Team/K12", ["team"], true],
+			["TEAM PLUS 混池", ["plus", "team"], true],
+			["A003-Pro", ["plus", "team"], false],
+			["A003-Plus", ["plus", "pro", "team"], true],
+			["A003-Pro", ["plus", "pro", "team"], true],
+			["A001-Team/K12", ["plus", "pro", "team"], true],
+			["A008-BugTeam", ["team"], false],
+			["任意分组", [], true],
+			["A008-BugTeam", [], true],
+		] as const;
+		for (const [name, plans, expected] of cases) {
+			expect(matchesAccountPool(name, plans, "all")).toBe(expected);
+		}
+		expect(matchesAccountPool("A003-Pro", [], "mixed")).toBe(true);
+		expect(matchesAccountPool("A008-BugTeam", [], "mixed")).toBe(false);
 		expect(ConfigSchema.parse({ accountPoolPlans: ["team", "plus"] }).accountPoolPlans).toEqual(["team", "plus"]);
 	});
 
