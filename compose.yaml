@@ -1,0 +1,19 @@
+services:
+  aihub-auto:
+    image: ghcr.io/planetsider/aihub-auto:${AIHUB_AUTO_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    ports:
+      - "${AIHUB_AUTO_BIND:-127.0.0.1}:${AIHUB_AUTO_PUBLISHED_PORT:-8787}:8787"
+    environment:
+      AIHUB_AUTO_CONFIG_DIR: /data
+      AIHUB_AUTO_HOST: 0.0.0.0
+      AIHUB_AUTO_PORT: "8787"
+      AIHUB_AUTO_PROXY_TOKEN: "${AIHUB_AUTO_PROXY_TOKEN:?set AIHUB_AUTO_PROXY_TOKEN in .env}"
+      AIHUB_AUTO_UI_PASSWORD: "${AIHUB_AUTO_UI_PASSWORD:?set AIHUB_AUTO_UI_PASSWORD in .env}"
+    volumes:
+      - aihub-auto-data:/data
+
+volumes:
+  aihub-auto-data:

@@ -1,135 +1,368 @@
 # aihub-auto
 
-让 OpenAI 兼容客户端通过本地地址使用 [AIHub](https://aihub.top)，并自动选择合适分组的跨平台反向代理。Windows 和 macOS 提供带托盘与 minisign 验证更新的 Tauri 桌面应用；Debian/Ubuntu 提供原生桌面包，所有平台也保留无需安装的 standalone 路由器。
+`aihub-auto` 是面向 [AIHub](https://aihub.top) 的本地 OpenAI 兼容反向代理。客户端固定连接本机地址，路由器负责 AIHub 登录、Key 管理、分组选择、会话亲和、故障转移和运行观测。
 
-它适合已经有 AIHub 账号、希望减少手动切组，同时保留连续对话缓存的人。启动后，客户端只需要访问本机 `http://127.0.0.1:8787/v1`；登录、Key 创建、分组选择、故障转移和运行日志由 aihub-auto 在本机处理。
+项目提供两种主要运行形态：
 
-> 仅支持 AIHub 的公开分组统计和 API，不是适配任意 OpenAI 兼容站点的通用代理。
+- **桌面应用**：Tauri 2 原生外壳负责启动内置路由器、显示 Web 控制台、托盘驻留、自启动和签名更新。
+- **Headless 路由器**：Bun 编译的单文件程序，不依赖桌面环境，适合服务器、终端或由外部进程管理器托管。
 
-## 五分钟开始
+> 本项目使用 AIHub 专有的公开分组统计和账号 API，目前仅路由 OpenAI 平台。它不是适配任意 OpenAI 兼容站点的通用代理。
 
-1. 从 [Releases](https://github.com/WSXYT/aihub-auto/releases/latest) 下载匹配的包：大多数 Windows x64 用户用 NSIS 安装器；免安装桌面版用 `aihub-auto-desktop-windows-x64.zip`；macOS 用对应架构的 DMG；Debian/Ubuntu x64 用 `.deb`。`aihub-auto-headless-<platform>-<arch>.zip` 是不带窗口的 standalone 路由器，适合无界面部署和其他 Linux 发行版。
-2. 启动 `aihub-auto` 桌面应用。它会启动内置路由器并在健康检查通过后打开窗口；关闭窗口后仍在系统托盘运行。standalone 版本则直接运行压缩包中的 `aihub-auto`/`aihub-auto.exe`。
-3. 按首次使用向导登录 AIHub 账号或粘贴 Access Token。standalone 版本也可打开 <http://127.0.0.1:8787/ui>。
-4. 将你的 OpenAI 兼容客户端指向本地代理：
+## 仓库与 fork 关系
+
+- 当前仓库：[PlanetSider/aihub-auto](https://github.com/PlanetSider/aihub-auto)
+- 上游仓库：[WSXYT/aihub-auto](https://github.com/WSXYT/aihub-auto)
+
+本仓库 fork 自 `WSXYT/aihub-auto`，当前业务代码仍基于上游实现。桌面端的 GitHub 入口、默认更新清单地址、签名公钥以及部分包元数据目前仍指向上游仓库；在当前 fork 发布独立安装包前，应将这些发行配置替换为本仓库自己的地址和签名材料。直接使用现有配置构建的桌面应用会检查上游更新。
+
+## 主要特点
+
+- 本地提供 OpenAI 兼容入口，默认地址为 `http://127.0.0.1:8787/v1`
+- 融合官网真实用户 TTFT、云端探测和本机 Peak EWMA/P90 观测
+- 支持 `economy`、`balanced`、`speed` 三种路由策略
+- 可按 Plus、Pro、Team 套餐、倍率区间和黑名单筛选分组
+- 通过显式会话、Responses 对话链、`prompt_cache_key` 和稳定提示前缀保持分组亲和
+- 在首字节返回前处理连接失败、TTFB 超时、429、5xx、余额不足、模型不兼容和失效 Key
+- 按组熔断并指数退避；响应已经开始后不会透明重放
+- 默认使用多 Key 池并发路由，也保留单 Key 全局切组兼容模式
+- Web 控制台支持登录、状态查看、手动锁组、策略调整、日志查看和运行诊断
+- 支持直连、系统 HTTP(S) 代理或自定义 HTTP(S) 出站代理
+- 配置、凭据、会话摘要、熔断状态和本地观测都保存在运行机器上
+
+## 快速使用
+
+### 1. 启动路由器
+
+使用桌面包时，启动 `aihub-auto` 桌面应用即可。桌面壳会拉起内置路由器，健康检查通过后打开控制台；关闭窗口只会隐藏到托盘，选择托盘中的“退出”才会停止路由器。
+
+使用 headless 包时，解压后直接运行：
+
+```bash
+./aihub-auto
+```
+
+Windows 对应程序为：
+
+```powershell
+.\aihub-auto.exe
+```
+
+### 2. 完成 AIHub 登录
+
+浏览器访问 <http://127.0.0.1:8787/ui>，使用 AIHub 邮箱和密码登录，或粘贴 Access Token。路由器验证账号后才会开始拉取账号可用分组并建立路由。
+
+### 3. 配置 OpenAI 客户端
 
 ```bash
 export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"
 export OPENAI_API_KEY="local-proxy"
 ```
 
-`OPENAI_API_KEY` 在本机默认可以是任意非空值；代理会使用你在控制台登录的 AIHub 凭据。客户端已经设置过 `OPENAI_BASE_URL` 时，只需替换成上面的本地地址后照常使用。
+PowerShell：
 
-需要修改本次启动的监听端口时，可以使用环境变量或命令行参数：
+```powershell
+$env:OPENAI_BASE_URL = "http://127.0.0.1:8787/v1"
+$env:OPENAI_API_KEY = "local-proxy"
+```
+
+默认回环部署没有设置 `proxyToken`，此时客户端 API Key 只需是任意非空值；路由器会移除客户端凭据并注入对应 AIHub 分组的真实 Key。如果部署配置了 `proxyToken`，这里必须填写该 token。
+
+### 4. 验证服务
+
+| 地址 | 作用 |
+| --- | --- |
+| <http://127.0.0.1:8787/ui> | Web 控制台 |
+| <http://127.0.0.1:8787/healthz> | 本地健康检查 |
+| <http://127.0.0.1:8787/v1/models> | 通过代理读取模型列表 |
+| <http://127.0.0.1:8787/v1> | 本地代理状态，不转发上游 |
+
+## 部署方式
+
+### 桌面部署
+
+桌面端将路由器作为 bundled sidecar 管理，不包含另一套路由实现。
+
+- 正式构建固定使用 `127.0.0.1:8787`
+- 开发构建使用 `127.0.0.1:8798`，避免占用正式端口
+- 桌面模式强制监听回环地址，不继承 `config.json` 中的局域网监听地址
+- 路由器启动失败、端口占用或健康检查失败时显示本地诊断页
+- 支持托盘驻留、登录时静默自启动、日志入口和 Tauri 签名更新
+- 更新器先读取代码中配置的 GitHub `latest.json`，再依次尝试最多三个自定义 HTTPS 镜像
+
+当前发布流程能够生成：
+
+| 平台 | 桌面产物 |
+| --- | --- |
+| Windows x64 | NSIS 安装器、免安装桌面 ZIP |
+| macOS x64 / arm64 | DMG |
+| Ubuntu/Debian x64 | DEB |
+
+这些是 CI 的实际构建目标，不代表仓库已经为所有系统提供了现成安装包。当前 fork 尚未建立独立发布链时，可查看[上游 Releases](https://github.com/WSXYT/aihub-auto/releases/latest)；使用本 fork 自行发布前，请先修改上文提到的仓库地址、更新端点和签名配置。
+
+### Headless 单文件部署
+
+Headless 版本包含路由器和 Web 控制台，不包含原生窗口、托盘和桌面更新器。它适合无桌面服务器、便携运行或自建进程守护。
+
+构建脚本支持以下目标：
+
+- Windows x64
+- Linux x64 baseline
+- Linux arm64
+- macOS x64
+- macOS arm64
+- Windows arm64：仅在所用 Bun 版本支持该编译目标时生成，否则自动跳过
+
+Linux x64 使用 Bun baseline 目标以降低 CPU 指令集要求；已有审计记录验证 glibc 2.17 和 2.24 用户空间，glibc 2.12 及更早版本不受支持。详细结果见 [安全报告](security_best_practices_report.md)。
+
+指定本次启动端口：
 
 ```bash
 AIHUB_AUTO_PORT=9000 ./aihub-auto
 ./aihub-auto --port 9000
+./aihub-auto --port=9000
 ```
 
-端口优先级为 `--port` > `AIHUB_AUTO_PORT` > `config.json` 中的
-`listen.port` > 默认值 `8787`。命令行和环境变量只覆盖本次启动，不会写回
-`config.json`。运行 `./aihub-auto --help` 可查看启动参数。
+端口优先级为：
 
-启动后可访问：
+```text
+--port > AIHUB_AUTO_PORT > config.json 中的 listen.port > 8787
+```
 
-| 地址 | 用途 |
+命令行参数和环境变量只覆盖本次启动，不会写回配置文件。
+
+### Docker / GHCR 部署
+
+每次推送到 `main` 后，[容器工作流](.github/workflows/container.yml)会自动构建 `linux/amd64` 和 `linux/arm64` 镜像，并发布到：
+
+```text
+ghcr.io/planetsider/aihub-auto
+```
+
+镜像标签规则：
+
+- `main` 推送：`latest`、`main`、`sha-<commit>`
+- `v1.2.3` 标签：`1.2.3`、`1.2`、`sha-<commit>`
+- Pull Request：只验证多架构构建，不推送镜像
+
+首次发布后，如果 GitHub Package 默认是私有的，需要在仓库的 **Packages → Package settings → Change visibility** 中将其设为 Public，或者在拉取前使用有 `read:packages` 权限的 Token 登录 GHCR。
+
+容器监听 `0.0.0.0:8787`，因此必须显式提供代理口令和控制台密码：
+
+```bash
+docker run -d \
+  --name aihub-auto \
+  --restart unless-stopped \
+  -p 127.0.0.1:8787:8787 \
+  -e AIHUB_AUTO_PROXY_TOKEN='replace-with-at-least-16-characters' \
+  -e AIHUB_AUTO_UI_PASSWORD='replace-with-at-least-12-characters' \
+  -v aihub-auto-data:/data \
+  ghcr.io/planetsider/aihub-auto:latest
+```
+
+这里将端口只映射到宿主机 `127.0.0.1`。如果需要从局域网或公网访问，请阅读下方网络部署说明，并在可信反向代理后提供 TLS。
+
+容器内固定使用 `/data` 保存配置、凭据、状态和日志，并以非 root 用户运行。模型接口需要使用 `AIHUB_AUTO_PROXY_TOKEN` 作为客户端 API Key；打开控制台时则输入 `AIHUB_AUTO_UI_PASSWORD`。
+
+本地构建镜像：
+
+```bash
+docker build -t aihub-auto:local .
+```
+
+### Docker Compose 部署
+
+仓库提供 [`compose.yaml`](compose.yaml) 和 [`.env.example`](.env.example)。Compose 默认从 GHCR 拉取 `latest` 镜像，将数据保存到命名卷，并只把服务发布到宿主机 `127.0.0.1:8787`：
+
+```bash
+cp .env.example .env
+# 编辑 .env，替换两个口令
+docker compose pull
+docker compose up -d
+docker compose ps
+docker compose logs -f aihub-auto
+```
+
+Windows PowerShell 可以使用 `Copy-Item .env.example .env` 复制环境文件。停止服务但保留数据：
+
+```bash
+docker compose down
+```
+
+升级到最新镜像：
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+切换版本时，在 `.env` 中设置 `AIHUB_AUTO_IMAGE_TAG`，例如 `1.2.3` 或 `sha-<commit>`，然后重新执行上面的升级命令。不要执行 `docker compose down -v`，除非确认要删除 AIHub 凭据、Key 池、会话状态和日志。
+
+需要从局域网访问时，将 `.env` 中的 `AIHUB_AUTO_BIND` 改为 `0.0.0.0`，并确保 `AIHUB_AUTO_PROXY_TOKEN`、`AIHUB_AUTO_UI_PASSWORD` 使用足够长的随机值；公网场景仍应在可信反向代理后提供 TLS。宿主机端口可通过 `AIHUB_AUTO_PUBLISHED_PORT` 修改，容器内部端口保持为 `8787`。
+
+### 从源码运行
+
+需要 [Bun](https://bun.sh/) 1.3.x：
+
+```bash
+git clone https://github.com/PlanetSider/aihub-auto.git
+cd aihub-auto
+bun install
+bun apps/router/src/main.ts
+```
+
+开发桌面端还需要 Rust 1.77.2 或更高兼容版本，以及当前平台所需的 Tauri 系统依赖：
+
+```bash
+bun run desktop:dev
+```
+
+### 局域网或反向代理部署
+
+默认配置只监听 `127.0.0.1`。若要监听 `0.0.0.0` 或其他非回环地址，代码会强制要求同时配置：
+
+- `proxyToken`：至少 16 个字符，保护模型代理接口
+- `uiPassword`：至少 12 个字符，保护 `/ctl/*` 控制接口
+
+示例 `config.json`：
+
+```json
+{
+  "listen": {
+    "host": "0.0.0.0",
+    "port": 8787
+  },
+  "proxyToken": "replace-with-a-long-proxy-token",
+  "uiPassword": "replace-with-a-console-password",
+  "publicOrigin": "https://router.example.com"
+}
+```
+
+公网使用时必须由可信反向代理提供 TLS，并保留原始 `Host`。`publicOrigin` 必须是唯一对外 HTTP(S) origin，不能包含路径；程序不会信任客户端提供的转发头来推断 origin。
+
+受管环境还可以使用下列环境变量覆盖配置文件中的密钥：
+
+```text
+AIHUB_AUTO_HOST
+AIHUB_AUTO_PROXY_TOKEN
+AIHUB_AUTO_UI_PASSWORD
+```
+
+`AIHUB_AUTO_HOST` 用于容器或受管部署覆盖监听地址；端口仍由 `AIHUB_AUTO_PORT` 控制。仓库没有提供 systemd unit 或 Kubernetes 清单，非容器服务器部署需要自行负责进程守护、TLS 和配置目录持久化。
+
+## 配置与数据目录
+
+| 系统 | 默认目录 |
 | --- | --- |
-| <http://127.0.0.1:8787/ui> | 登录、配置和实时运维控制台 |
-| <http://127.0.0.1:8787/healthz> | 存活检查 |
-| <http://127.0.0.1:8787/v1/models> | 验证客户端可通过代理读取模型 |
-| <http://127.0.0.1:8787/v1> | 本地 API 状态响应，不会转发到上游 |
+| Windows | `%LocalAppData%\aihub-auto` |
+| Linux | `~/.config/aihub-auto`，遵循 `XDG_CONFIG_HOME` |
+| macOS | `~/Library/Application Support/aihub-auto` |
 
-## 桌面应用
+可使用 `AIHUB_AUTO_CONFIG_DIR` 指定其他目录。主要文件如下：
 
-桌面窗口复用同一套本地控制台，不复制代理或路由逻辑。应用启动时先拉起 bundled Bun sidecar，再等待 `/healthz` 返回 200；端口占用或 sidecar 启动失败时显示本地诊断页。开发构建默认使用 8798，正式构建使用 8787，避免调试时打断正在使用的正式路由器。
+| 文件 | 内容 |
+| --- | --- |
+| `config.json` | 用户配置和部署配置 |
+| `credentials.json` | AIHub Access Token、Refresh Token 和兼容模式 Key |
+| `state.json` | 托管 Key 池、会话摘要、Responses 别名、模型负缓存、熔断和观测状态 |
+| `app.log` | 自动轮转的脱敏运行日志 |
+| `crash.log` | 启动、退出和未处理异常记录 |
+| `audit.jsonl` | 启用 `auditLog` 后的路由决策审计 |
 
-关闭主窗口只会隐藏到托盘。托盘菜单提供显示窗口、运行日志、检查更新和明确退出；退出时同时停止 sidecar。日志页通过已鉴权的 `/ctl/logs` 读取 `app.log` 最近 500 行，服务端限制为最多 1000 行/512 KiB 并再次脱敏，支持级别/文本筛选与暂停自动刷新。
+非 Windows 系统上的 JSON 状态文件使用 `0600` 权限写入。会话状态保存的是 SHA-256 摘要，不会保存原始会话 ID 或提示词。
 
-Windows 和 macOS 桌面应用启动后会检查 GitHub Releases。发现新版时由用户点击确认，Tauri 校验 minisign 签名后下载并安装，显示进度，成功后自动重启。Debian/Ubuntu `.deb` 由系统包管理器更新；发布同时附带免安装的 Windows 桌面 ZIP 和文件名带 `-headless` 的无窗口 standalone ZIP，桌面环境或更新器不可用时可直接回退。`*.sig` 与 `latest.json` 只供更新器使用，不需要手动打开。当前自动更新包已做 minisign 验证；Windows Authenticode 与 macOS Developer ID/公证尚未配置，系统可能仍显示发行方提示。
+### 常用配置
 
-## 日常使用
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `baseUrl` | `https://aihub.top` | AIHub 站点地址；公开统计接口是 AIHub 专有接口 |
+| `listen.host` / `listen.port` | `127.0.0.1` / `8787` | Headless 监听地址和端口 |
+| `mode` | `balanced` | `economy`、`balanced` 或 `speed` |
+| `accountPoolPlans` | `[]` | Plus、Pro、Team 的并集；空数组表示不按套餐名筛选 |
+| `priceBand` | `0`～`0.15` | 允许使用的倍率范围；设为 `null` 表示不限制 |
+| `keyMode` | `pool` | `pool` 为默认并发模式，`single` 为兼容模式 |
+| `poolMaxGroups` | `4` | 新会话参与调度的候选上限和 Key 池目标大小 |
+| `sessionTtlMs` | 24 小时 | 会话与模型能力记录保留时间 |
+| `pollIntervalMs` | 60 秒 | 后台统计与默认组决策周期 |
+| `ttfbTimeoutMs` | 60 秒 | 首字节超时和请求内故障转移门槛 |
+| `outboundProxyMode` | `none` | `none`、`system` 或 `custom` |
+| `outboundProxyUrl` | 空 | `custom` 模式使用的 HTTP(S) 代理 |
+| `updateMirrors` | `[]` | 最多三个桌面更新 HTTPS `latest.json` 镜像 |
+| `upstreamUserAgent` | 空 | 空值保留客户端 User-Agent |
+| `sentryDsn` | 项目内置公共 DSN | 设为空字符串可禁用后端 Sentry 和反馈入口 |
 
-通常只需要在控制台完成三件事：
+`mode`、套餐、倍率、健康门槛、User-Agent、出站代理、更新镜像和黑名单可从控制台保存并热更新。`keyMode` 与 `poolMaxGroups` 是启动级配置，需编辑配置文件后重启。
 
-1. **登录 AIHub**：代理保存凭据在本机配置目录，不会把 Key 返回给控制台接口或写入普通日志。
-2. **选择策略**：默认“均衡”；想控制成本可选“省钱”，优先速度可选“速度”。
-3. **让客户端持续使用本机 `/v1` 地址**：会话、Responses 对话链和稳定提示前缀会保持同组亲和，避免每个请求重新切组。
+完整字段、池回收规则和网络边界见 [路由器说明](apps/router/README.md)。
 
-控制台会分别显示官网真实用户、标准化云端探测和本机风险 TTFT，以及融合值、待命升档层、熔断/黑名单/延迟等排除原因、近 3 小时稳定率、会话数量、在飞请求及 Key 池状态。无头 standalone 版本会在右上角标记“无头路由器”。候选行可一键锁定/解除某个组,策略区也可自定义发往模型 API 的 User-Agent。右上角提供官方 Sentry 用户反馈入口。运行中的配置可直接保存；`keyMode` 和 `poolMaxGroups` 属于启动级配置，修改后重启生效。
-
-## 路由策略
+## 路由行为
 
 | 模式 | 行为 |
 | --- | --- |
-| `economy` 省钱 | 只在最低健康倍率层为新会话选组；高价健康层留作故障或健康退化时的升档候选 |
-| `balanced` 均衡 | 对数价格和对数保守延迟等权折中，默认模式 |
-| `speed` 速度 | 对数保守延迟权重更高，更早使用快速组 |
+| `economy` | 新会话只使用最低健康倍率层；该层不可用时才升档 |
+| `balanced` | 对数价格和对数保守延迟等权折中 |
+| `speed` | 提高延迟权重，更愿意使用快速的高倍率组 |
 
-省钱模式的默认健康门槛为：最近 3 小时至少 3 条结果后成功率不低于 80%，保守 TTFT 不超过 20 秒。已有结果且成功率为 0% 的组会立即视为不稳定，不能显示为可用升档。官网真实用户均值与云端探测先做几何融合，再按本地置信度融合本机 Peak/P90；缺失或 0 值来源不参与，不把“无数据”误当成快速或失败。
+已有显式会话、Responses 分支和热提示缓存优先返回原组，不会因为后台排名变化而迁移。新会话会在最多 `poolMaxGroups` 个候选中比较静态分数与实时在飞负载。
 
-所有模式都使用同一尺度无关的对数效用和无上限负载惩罚：统一放大倍率或延迟不会改变相对排序，某组积压足够高时可使用池内其他健康容量。负载计数不是单槽锁，一个分组可同时承载多个并发请求；省钱模式仍只在同一最低价格层内分流，不会因为负载单独加价。
+默认 `pool` 模式按需创建并复用名为 `aihub-auto-g{groupId}` 的 AIHub Key，只管理本实例已记录的自动 Key，不删除手动 Key 或其他实例的未知 Key。缓存保护窗口结束后，空闲 Key 可以按 LRU 回收，而会话映射仍会保留到 TTL，后续续接时可在原组重建 Key。
 
-手动锁定优先作用于新会话和无状态请求；已有显式会话、conversation、Responses 分支与热缓存亲和仍回原组。锁组在首字节前遇到 429、5xx、超时、模型不兼容或熔断时仅本请求临时故障转移，不会自动解除锁定；一旦开始回传内容，绝不透明重放，避免重复输出和计费。
+`single` 模式复用一把已有 Key，并通过 AIHub API 全局切组。长流和控制面切换共享 FIFO 租约，因此不会在响应中途换组，但它不能像 `pool` 模式一样并行使用多个分组。
 
-## Key 模式
+算法、并发和故障转移细节见 [核心算法说明](packages/core/ALGORITHM.md)。
 
-- **`pool`（默认）**：按需创建并复用 `aihub-auto-g{groupId}` Key。同一组可并发处理多个请求，新会话在当前候选层内动态均衡，已绑定会话保持原组。默认目标池大小为 4，短缓存窗口外的空闲 Key 可以回收；不会触碰手动创建的 Key。
-- **`single`（兼容模式）**：复用已有的一把 Key，通过上游切组。代理长流和控制面切组共享 FIFO 租约，不会在响应中途改组；因为上游的单 Key 切组仍是全局行为，无法像 pool 一样并行使用不同组，仅适用于不能创建自动 Key 的账号。
+## Koishi 插件
 
-## 配置、日志与安全
+仓库包含独立的 [`koishi-plugin-aihub-auto`](packages/koishi-plugin-aihub-auto)。它只读取公开统计并复用核心评分算法，不连接本地路由器，也不创建、修改或删除 AIHub Key。
 
-配置和日志目录：
+- `最优分组`：返回 1～6 个接近最佳的候选
+- `最烂分组`：返回最高有效倍率层中保守 TTFT 最慢的一项
+- 支持平台/群号通配规则、私聊开关、查询冷却和结果缓存
 
-| 系统 | 目录 |
-| --- | --- |
-| Windows | `%LocalAppData%\\aihub-auto` |
-| Linux | `~/.config/aihub-auto` |
-| macOS | `~/Library/Application Support/aihub-auto` |
+插件使用和配置见 [Koishi 插件说明](packages/koishi-plugin-aihub-auto/README.md)。
 
-其中 `config.json` 保存路由配置和会话状态，`app.log` 记录脱敏运行日志，`crash.log` 记录启动、退出和异常事件，均会自动轮转。可通过 `AIHUB_AUTO_CONFIG_DIR` 指定其他目录。
-
-默认使用 `xytime/aihub` 的公共 Sentry DSN，也可在 `config.json` 设置 `sentryDsn` 或用 `SENTRY_DSN` 环境变量覆盖。启用后只上报路由器自身异常，不把 AIHub/OpenAI 响应错误、超时、连接中断或客户端取消当成 Sentry 错误；tracing、session、fetch、console、请求内容及各类敏感数据自动采集均关闭。登录邮箱仅在账号已验证时用于 Sentry user 与反馈表单预填，未登录保持匿名。
-
-默认只监听 `127.0.0.1`。如需监听局域网地址，必须设置 `proxyToken` 和 `uiPassword`；客户端随后以 `OPENAI_API_KEY=<proxyToken>` 访问代理。公网部署应在可信反向代理和 TLS 后运行，并把 `publicOrigin` 配置为对外 HTTPS origin。
-
-完整配置项、池回收规则和安全边界见 [router 使用说明](apps/router/README.md)。
-
-Linux x64 发行包使用 Bun 的 baseline CPU 目标，以兼容不支持 AVX2 的较旧
-x86-64 处理器；已验证 CentOS 7（glibc 2.17）和 Debian 9（glibc 2.24），
-不支持 glibc 2.12 及更早版本。完整矩阵见仓库安全审计报告。
-
-## Koishi 查询插件
-
-[`koishi-plugin-aihub-auto`](packages/koishi-plugin-aihub-auto) 是独立的只读推荐插件，不会操作路由器或 AIHub Key：
-
-```bash
-npm i koishi-plugin-aihub-auto
-```
-
-- `最优分组`：返回 1 到 6 个接近最佳的公开统计候选。
-- `最烂分组`：固定返回 1 个候选，先取最高有效倍率层，再取该层保守首字延迟最高的分组。
-
-详细配置和群聊触发范围见 [插件说明](packages/koishi-plugin-aihub-auto/README.md)。
-
-## 项目结构
-
-| 目录 | 说明 |
-| --- | --- |
-| [`apps/router`](apps/router) | 跨平台单文件反代、自动 Key 池、会话亲和、请求内故障转移和 Web 控制台 |
-| [`apps/desktop`](apps/desktop) | Tauri 2 原生窗口、sidecar 生命周期、托盘与 minisign 验证更新 |
-| [`packages/koishi-plugin-aihub-auto`](packages/koishi-plugin-aihub-auto) | Koishi 最优/最烂分组查询插件 |
-| [`packages/core`](packages/core) | 共享评分、决策、熔断和本地观测核心，无运行时依赖 |
-
-## 开发
+## 构建与发布
 
 ```bash
 bun install
-bun run check          # 全部 Bun 测试和 TypeScript 检查
-bun run desktop:sidecar # 构建当前 Rust target 的 bundled router
-bun run desktop:dev     # Tauri 开发窗口，默认路由端口 8798
-bun run desktop:build   # Tauri 安装包；更新签名需要 TAURI_SIGNING_PRIVATE_KEY
-bun scripts/build.ts   # 构建 standalone 六目标到 artifacts/
+bun run check
+
+# 构建全部可用的 headless 目标到 artifacts/
+bun scripts/build.ts
+
+# 只构建一个 headless 目标
+bun scripts/build.ts linux-x64
+
+# 为当前 Rust target 准备桌面 sidecar
+bun run desktop:sidecar
+
+# 构建当前平台桌面安装包
+bun run desktop:build
 ```
 
-算法、并发语义和故障转移细节见 [核心算法说明](packages/core/ALGORITHM.md)。
+推送 `v*` 标签会触发 [GitHub Actions 发布流程](.github/workflows/release.yml)：先运行测试和类型检查，再构建 headless ZIP、Windows NSIS、Windows 便携 ZIP、macOS DMG、Linux DEB 及 Tauri 更新文件。正式发布前需要配置 `TAURI_SIGNING_PRIVATE_KEY`，并保证标签、桌面 `package.json`、Tauri 配置和 Cargo 版本一致。
+
+推送到 `main` 或推送 `v*` 标签还会触发独立的[容器工作流](.github/workflows/container.yml)，使用仓库自动提供的 `GITHUB_TOKEN` 登录 GHCR 并发布多架构镜像，不需要额外配置 Docker Hub 密钥。仓库设置必须允许 GitHub Actions 对 Packages 执行写操作；工作流已声明 `packages: write`。
+
+## 项目结构
+
+| 目录 | 作用 |
+| --- | --- |
+| [`packages/core`](packages/core) | AIHub API 客户端、评分、决策、熔断和本地观测 |
+| [`apps/router`](apps/router) | Headless 路由器、反向代理、Key 池、会话亲和和 Web 控制台 |
+| [`apps/desktop`](apps/desktop) | Tauri 桌面壳、sidecar 生命周期、托盘、自启动和更新 |
+| [`packages/koishi-plugin-aihub-auto`](packages/koishi-plugin-aihub-auto) | Koishi 公开统计查询插件 |
+| [`scripts`](scripts) | Headless 交叉编译和桌面 sidecar 构建脚本 |
+| [`.github/workflows`](.github/workflows) | 跨平台测试、打包和 Release 流程 |
+| [`Dockerfile`](Dockerfile) | Headless 多架构容器镜像 |
+
+## 安全说明
+
+- 默认保持回环监听；不要在没有 `proxyToken` 和 `uiPassword` 时向网络开放
+- 公网部署必须使用 TLS，且不要把配置目录、凭据文件或日志暴露给 Web 服务
+- 控制台响应使用 nonce CSP、禁止嵌入和缓存，并校验浏览器 Origin 与 Host
+- 普通日志会脱敏，控制台日志接口还会再次脱敏；审计日志仍应作为敏感运行数据管理
+- Sentry 仅用于路由器自身异常和用户主动反馈；上游 HTTP 错误、超时、取消和请求内容不作为错误事件上报
+- Windows Authenticode 与 macOS Developer ID/公证目前未配置；minisign/Tauri 更新签名不能替代操作系统发行者签名
+
+更完整的审计结论和兼容性范围见 [security_best_practices_report.md](security_best_practices_report.md)。

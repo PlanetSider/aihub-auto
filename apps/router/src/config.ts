@@ -207,15 +207,20 @@ export const ConfigSchema = z
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
 
-// The managed sub2api deployment supplies these secrets to both services.
+// Managed/container deployments can override listener and secrets without
+// writing them into a baked image or committed config file.
 export function applyManagedSecretOverrides(
 	config: AppConfig,
 	env: Record<string, string | undefined>,
 ): AppConfig {
 	const uiPassword = env["AIHUB_AUTO_UI_PASSWORD"]?.trim();
 	const proxyToken = env["AIHUB_AUTO_PROXY_TOKEN"]?.trim();
+	const listenHost = env["AIHUB_AUTO_HOST"]?.trim();
 	return ConfigSchema.parse({
 		...config,
+		...(listenHost
+			? { listen: { ...config.listen, host: listenHost } }
+			: {}),
 		...(uiPassword ? { uiPassword } : {}),
 		...(proxyToken ? { proxyToken } : {}),
 	});

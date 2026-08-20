@@ -1,0 +1,16 @@
+.git
+.github
+.taskman
+.codex
+.agents
+node_modules
+artifacts
+dist-types
+apps/desktop/src-tauri/target
+apps/desktop/src-tauri/binaries
+*.log
+*.tgz
+.env
+credentials.json
+state.json
+config.json

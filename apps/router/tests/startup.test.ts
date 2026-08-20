@@ -55,9 +55,11 @@ describe("startup options", () => {
 			proxyToken: "persisted-proxy-token",
 		});
 		const effective = applyManagedSecretOverrides(persisted, {
+			AIHUB_AUTO_HOST: "0.0.0.0",
 			AIHUB_AUTO_UI_PASSWORD: "managed-console-password",
 			AIHUB_AUTO_PROXY_TOKEN: "managed-proxy-token",
 		});
+		expect(effective.listen.host).toBe("0.0.0.0");
 		expect(effective.uiPassword).toBe("managed-console-password");
 		expect(effective.proxyToken).toBe("managed-proxy-token");
 		expect(persisted.uiPassword).toBe("persisted-console-password");
