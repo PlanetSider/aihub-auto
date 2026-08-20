@@ -162,7 +162,7 @@ docker run -d \
 
 这里将端口只映射到宿主机 `127.0.0.1`。如果需要从局域网或公网访问，请阅读下方网络部署说明，并在可信反向代理后提供 TLS。
 
-容器内固定使用 `/data` 保存配置、凭据、状态和日志，并以非 root 用户运行；Compose 会把它直接映射到宿主机的 `AIHUB_AUTO_DATA_DIR`（默认 `./data`），便于查看、备份和迁移。Linux 主机首次部署前建议执行 `mkdir -p data && sudo chown -R 10001:10001 data`，避免容器用户没有写入权限。模型接口需要使用 `AIHUB_AUTO_PROXY_TOKEN` 作为客户端 API Key；打开控制台时则输入 `AIHUB_AUTO_UI_PASSWORD`。
+容器内固定使用 `/data` 保存配置、凭据、状态和日志，并以非 root 用户运行；Compose 会把它直接映射到宿主机的 `./data` 目录，便于查看、备份和迁移。Linux 主机首次部署前建议执行 `mkdir -p data && sudo chown -R 10001:10001 data`，避免容器用户没有写入权限。模型接口需要使用 `AIHUB_AUTO_PROXY_TOKEN` 作为客户端 API Key；打开控制台时则输入 `AIHUB_AUTO_UI_PASSWORD`。
 
 本地构建镜像：
 
@@ -172,18 +172,17 @@ docker build -t aihub-auto:local .
 
 ### Docker Compose 部署
 
-仓库提供 [`compose.yaml`](compose.yaml) 和 [`.env.example`](.env.example)。Compose 默认从 GHCR 拉取 `latest` 镜像，将容器 `/data` 直接绑定到项目目录下的 `./data`，并只把服务发布到宿主机 `127.0.0.1:8787`：
+仓库提供 [`compose.yaml`](compose.yaml)。Compose 默认从 GHCR 拉取 `latest` 镜像，将容器 `/data` 直接绑定到项目目录下的 `./data`，并只把服务发布到宿主机 `127.0.0.1:8787`。镜像、端口、口令和数据目录都直接写在 Compose 文件中，并附有中文注释：
 
 ```bash
-cp .env.example .env
-# 编辑 .env，替换两个口令
+# 先编辑 compose.yaml，替换其中的代理口令和控制台口令
 docker compose pull
 docker compose up -d
 docker compose ps
 docker compose logs -f aihub-auto
 ```
 
-Windows PowerShell 可以使用 `Copy-Item .env.example .env` 复制环境文件。停止服务但保留数据：
+停止服务但保留宿主机 `./data` 数据：
 
 ```bash
 docker compose down
@@ -196,9 +195,9 @@ docker compose pull
 docker compose up -d
 ```
 
-切换版本时，在 `.env` 中设置 `AIHUB_AUTO_IMAGE_TAG`，例如 `1.2.3` 或 `sha-<commit>`，然后重新执行上面的升级命令。数据位于 `.env` 的 `AIHUB_AUTO_DATA_DIR` 指定目录，停止或升级容器不会删除这些文件；如需清空数据，请先停止服务，再明确删除该宿主机目录。
+切换版本时，直接修改 `compose.yaml` 中的 `image` 标签，例如 `ghcr.io/planetsider/aihub-auto:1.2.3` 或 `ghcr.io/planetsider/aihub-auto:sha-<commit>`，然后重新执行上面的升级命令。数据固定映射到宿主机 `./data`，停止或升级容器不会删除这些文件；如需清空数据，请先停止服务，再明确删除该宿主机目录。
 
-需要从局域网访问时，将 `.env` 中的 `AIHUB_AUTO_BIND` 改为 `0.0.0.0`，并确保 `AIHUB_AUTO_PROXY_TOKEN`、`AIHUB_AUTO_UI_PASSWORD` 使用足够长的随机值；公网场景仍应在可信反向代理后提供 TLS。宿主机端口可通过 `AIHUB_AUTO_PUBLISHED_PORT` 修改，容器内部端口保持为 `8787`。
+需要从局域网访问时，将 `compose.yaml` 中的端口映射改为 `0.0.0.0:8787:8787`，并确保两个口令使用足够长的随机值；公网场景仍应在可信反向代理后提供 TLS。若要更换宿主机端口，修改映射左侧端口，容器内部端口保持为 `8787`。
 
 ### 从源码运行
 

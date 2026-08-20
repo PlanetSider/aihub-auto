@@ -1,16 +1,25 @@
 services:
   aihub-auto:
-    image: ghcr.io/planetsider/aihub-auto:${AIHUB_AUTO_IMAGE_TAG:-latest}
+    # GHCR 镜像；建议生产环境改成固定版本标签，避免 latest 自动漂移。
+    image: ghcr.io/planetsider/aihub-auto:latest
+    # 容器异常退出后自动重启。
     restart: unless-stopped
+    # 使用 init 处理 Bun 子进程和退出信号。
     init: true
     stop_grace_period: 30s
     ports:
-      - "${AIHUB_AUTO_BIND:-127.0.0.1}:${AIHUB_AUTO_PUBLISHED_PORT:-8787}:8787"
+      # 默认只允许本机访问；需要局域网访问时可改为 0.0.0.0:8787:8787。
+      - "127.0.0.1:8787:8787"
     environment:
+      # 配置、凭据、状态和日志都写入容器内的 /data。
       AIHUB_AUTO_CONFIG_DIR: /data
+      # 容器需要监听非回环地址，才能接受宿主机端口映射的请求。
       AIHUB_AUTO_HOST: 0.0.0.0
       AIHUB_AUTO_PORT: "8787"
-      AIHUB_AUTO_PROXY_TOKEN: "${AIHUB_AUTO_PROXY_TOKEN:?set AIHUB_AUTO_PROXY_TOKEN in .env}"
-      AIHUB_AUTO_UI_PASSWORD: "${AIHUB_AUTO_UI_PASSWORD:?set AIHUB_AUTO_UI_PASSWORD in .env}"
+      # 必须替换为至少 16 个字符的随机代理口令；客户端用它作为 API Key。
+      AIHUB_AUTO_PROXY_TOKEN: "CHANGE_THIS_PROXY_TOKEN_TO_A_LONG_RANDOM_VALUE"
+      # 必须替换为至少 12 个字符的控制台口令。
+      AIHUB_AUTO_UI_PASSWORD: "CHANGE_THIS_UI_PASSWORD"
     volumes:
-      - "${AIHUB_AUTO_DATA_DIR:-./data}:/data"
+      # 直接映射宿主机目录，便于查看、备份和迁移运行数据。
+      - "./data:/data"
